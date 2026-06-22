@@ -40,7 +40,7 @@ linux:
   target:
     - AppImage
     - deb
-  compression: maximum
+  compression: xz
   maintainer: electronjs.org
   category: Utility
 appImage:
