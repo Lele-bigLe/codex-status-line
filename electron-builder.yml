@@ -13,15 +13,15 @@ asarUnpack:
   - resources/**
 win:
   executableName: codex-status
-  icon: build/icon.ico
+  icon: build/icon-1.png
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
-  installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
-  installerHeaderIcon: build/icon.ico
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  runAfterFinish: true
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
