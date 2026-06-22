@@ -33,6 +33,7 @@ const COPY = {
     custom: '自定义',
     percentageMode: '百分比口径',
     language: '语种',
+    launchAtLogin: '开机自启动',
     auto: '自动',
     manual: '手动',
     enabled: '开启',
@@ -68,6 +69,7 @@ const COPY = {
     custom: 'Custom',
     percentageMode: 'Metric mode',
     language: 'Language',
+    launchAtLogin: 'Open at login',
     auto: 'Auto',
     manual: 'Manual',
     enabled: 'Enabled',
@@ -474,6 +476,17 @@ function App(): React.JSX.Element {
                   value={settings.locale}
                 />
               </SettingField>
+
+              <SettingField label={copy.launchAtLogin}>
+                <ToggleSwitch
+                  checked={settings.launchAtLogin}
+                  offLabel={copy.disabled}
+                  onChange={checked => {
+                    void handleSettingsPatch({ launchAtLogin: checked })
+                  }}
+                  onLabel={copy.enabled}
+                />
+              </SettingField>
             </div>
 
             <div className="panel__footer">
@@ -588,6 +601,33 @@ function SegmentedControl({
         </button>
       ))}
     </div>
+  )
+}
+
+function ToggleSwitch({
+  checked,
+  onChange,
+  onLabel,
+  offLabel
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  onLabel: string
+  offLabel: string
+}): React.JSX.Element {
+  return (
+    <button
+      aria-checked={checked}
+      className={`toggle-switch ${checked ? 'is-checked' : ''}`}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      type="button"
+    >
+      <span className="toggle-switch__track" aria-hidden="true">
+        <span className="toggle-switch__thumb" />
+      </span>
+      <span className="toggle-switch__label">{checked ? onLabel : offLabel}</span>
+    </button>
   )
 }
 

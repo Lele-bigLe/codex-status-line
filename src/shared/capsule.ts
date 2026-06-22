@@ -38,6 +38,7 @@ export interface AppSettings {
   refreshIntervalSeconds: number
   percentageMode: PercentageMode
   locale: LocaleCode
+  launchAtLogin: boolean
 }
 
 export interface WindowPreferences {
@@ -104,7 +105,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   refreshMode: 'auto',
   refreshIntervalSeconds: DEFAULT_REFRESH_INTERVAL_SECONDS,
   percentageMode: 'remaining',
-  locale: 'zh-CN'
+  locale: 'zh-CN',
+  launchAtLogin: false
 }
 
 export const DEFAULT_WINDOW_PREFERENCES: WindowPreferences = {}
@@ -132,7 +134,11 @@ export function normalizeSettings(input: Partial<AppSettings> | undefined): AppS
     percentageMode: isPercentageMode(input?.percentageMode)
       ? input.percentageMode
       : DEFAULT_SETTINGS.percentageMode,
-    locale: isLocaleCode(input?.locale) ? input.locale : DEFAULT_SETTINGS.locale
+    locale: isLocaleCode(input?.locale) ? input.locale : DEFAULT_SETTINGS.locale,
+    launchAtLogin:
+      typeof input?.launchAtLogin === 'boolean'
+        ? input.launchAtLogin
+        : DEFAULT_SETTINGS.launchAtLogin
   }
 }
 

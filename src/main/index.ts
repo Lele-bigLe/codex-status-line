@@ -221,10 +221,18 @@ function loadRenderer(window: BrowserWindow, role: RendererWindowRole): void {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
-    persistedState = await loadPersistedState()
+    const loadedState = await loadPersistedState()
+    electronApp.setAppUserModelId('com.openai.codex-status')
+
+    persistedState = {
+      ...loadedState,
+      settings: syncLaunchAtLoginPreference(loadedState.settings)
+    }
     currentSnapshot = createEmptySnapshot()
 
-    electronApp.setAppUserModelId('com.openai.codex-status')
+    if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {
+      queuePersistState()
+    }
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
@@ -279,12 +287,14 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(CHANNELS.updateSettings, async (_, patch: Partial<AppSettings>) => {
+    const nextSettings = syncLaunchAtLoginPreference({
+      ...persistedState.settings,
+      ...patch
+    })
+
     persistedState = {
       ...persistedState,
-      settings: normalizeSettings({
-        ...persistedState.settings,
-        ...patch
-      })
+      settings: nextSettings
     }
 
     queuePersistState()
@@ -527,6 +537,30 @@ function createPreferencesPayload(): PreferencesPayload {
     window: persistedState.window,
     panel: persistedState.panel
   }
+}
+
+function syncLaunchAtLoginPreference(settings: AppSettings): AppSettings {
+  const normalizedSettings = normalizeSettings(settings)
+
+  if (!isLaunchAtLoginSupported()) {
+    return {
+      ...normalizedSettings,
+      launchAtLogin: false
+    }
+  }
+
+  app.setLoginItemSettings({
+    openAtLogin: normalizedSettings.launchAtLogin
+  })
+
+  return {
+    ...normalizedSettings,
+    launchAtLogin: app.getLoginItemSettings().openAtLogin
+  }
+}
+
+function isLaunchAtLoginSupported(): boolean {
+  return process.platform === 'win32' || process.platform === 'darwin'
 }
 
 function openPanelWindow(view: PanelView): void {

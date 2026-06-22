@@ -464,6 +464,72 @@ body {
   cursor: default;
 }
 
+.toggle-switch {
+  width: 100%;
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(202, 190, 176, 0.72);
+  background: #f3eee7;
+  color: var(--text-secondary);
+  font: inherit;
+  appearance: none;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.toggle-switch.is-checked {
+  border-color: rgba(63, 122, 88, 0.58);
+  background: #ffffff;
+  color: var(--text-primary);
+  box-shadow: 0 0 0 2px rgba(63, 122, 88, 0.1);
+}
+
+.toggle-switch__track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 22px;
+  border-radius: 999px;
+  background: #d8d0c6;
+  transition: background-color 160ms ease;
+}
+
+.toggle-switch.is-checked .toggle-switch__track {
+  background: #3f7a58;
+}
+
+.toggle-switch__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(40, 36, 31, 0.18);
+  transition: transform 160ms ease;
+}
+
+.toggle-switch.is-checked .toggle-switch__thumb {
+  transform: translateX(20px);
+}
+
+.toggle-switch__label {
+  min-width: 42px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .setting-stack {
   display: flex;
   flex-direction: column;
