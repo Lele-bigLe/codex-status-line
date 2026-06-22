@@ -57,6 +57,24 @@ let persistedState: PersistedState = {
 }
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (panelWindow && !panelWindow.isDestroyed()) {
+      panelWindow.show()
+      panelWindow.focus()
+      return
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      showWindow()
+    }
+  })
+}
+
 function createCapsuleWindow(): BrowserWindow {
   const bounds = resolveCapsuleBounds(persistedState.window.x, persistedState.window.y)
 
@@ -201,36 +219,38 @@ function loadRenderer(window: BrowserWindow, role: RendererWindowRole): void {
   })
 }
 
-app.whenReady().then(async () => {
-  persistedState = await loadPersistedState()
-  currentSnapshot = createEmptySnapshot()
+if (hasSingleInstanceLock) {
+  app.whenReady().then(async () => {
+    persistedState = await loadPersistedState()
+    currentSnapshot = createEmptySnapshot()
 
-  electronApp.setAppUserModelId('com.openai.codex-status')
+    electronApp.setAppUserModelId('com.openai.codex-status')
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
 
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.hide()
-  }
-
-  registerIpcHandlers()
-  mainWindow = createCapsuleWindow()
-  createTray()
-  syncRefreshTimer()
-  void refreshStatus()
-
-  app.on('activate', function () {
-    if (mainWindow === null) {
-      mainWindow = createCapsuleWindow()
-      refreshTrayMenu()
-      return
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.hide()
     }
 
-    showWindow()
+    registerIpcHandlers()
+    mainWindow = createCapsuleWindow()
+    createTray()
+    syncRefreshTimer()
+    void refreshStatus()
+
+    app.on('activate', function () {
+      if (mainWindow === null) {
+        mainWindow = createCapsuleWindow()
+        refreshTrayMenu()
+        return
+      }
+
+      showWindow()
+    })
   })
-})
+}
 
 app.on('window-all-closed', () => {
   return
@@ -313,6 +333,12 @@ function refreshTrayMenu(): void {
       }
     },
     {
+      label: labels.details,
+      click: () => {
+        openDetailsFromTray()
+      }
+    },
+    {
       label: labels.settings,
       click: () => {
         openSettingsFromTray()
@@ -331,11 +357,12 @@ function refreshTrayMenu(): void {
   tray.setToolTip(buildTrayTooltip())
 }
 
-function getTrayLabels(): Record<'refresh' | 'toggle' | 'settings' | 'quit', string> {
+function getTrayLabels(): Record<'refresh' | 'toggle' | 'details' | 'settings' | 'quit', string> {
   if (persistedState.settings.locale === 'en-US') {
     return {
       refresh: 'Refresh',
       toggle: 'Show/Hide',
+      details: 'Details',
       settings: 'Settings',
       quit: 'Quit'
     }
@@ -344,6 +371,7 @@ function getTrayLabels(): Record<'refresh' | 'toggle' | 'settings' | 'quit', str
   return {
     refresh: '刷新',
     toggle: '显示/隐藏',
+    details: '详情',
     settings: '设置',
     quit: '退出'
   }
@@ -417,6 +445,10 @@ function showWindow(): void {
 
 function openSettingsFromTray(): void {
   openPanelWindow('settings')
+}
+
+function openDetailsFromTray(): void {
+  openPanelWindow('details')
 }
 
 function quitApp(): void {

@@ -1,4 +1,4 @@
-appId: com.electron.app
+appId: com.openai.codex-status
 productName: codex-status
 directories:
   buildResources: build
@@ -13,11 +13,15 @@ asarUnpack:
   - resources/**
 win:
   executableName: codex-status
+  icon: build/icon.ico
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
