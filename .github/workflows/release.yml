@@ -82,14 +82,12 @@ jobs:
             target: --mac
             artifacts: |
               dist/*.dmg
-              dist/*.zip
           - name: linux
             os: ubuntu-latest
             target: --linux
             artifacts: |
               dist/*.AppImage
               dist/*.deb
-              dist/*.snap
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -115,7 +113,7 @@ jobs:
           name: installers-${{ matrix.name }}
           path: ${{ matrix.artifacts }}
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   release:
     name: Publish GitHub Release
@@ -139,7 +137,7 @@ jobs:
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          mapfile -d '' ASSETS < <(find release-assets -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.snap" \) -print0)
+          mapfile -d '' ASSETS < <(find release-assets -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" \) -print0)
 
           if [ "${#ASSETS[@]}" -eq 0 ]; then
             echo "::error::No installer assets were found."

@@ -14,6 +14,7 @@ asarUnpack:
 win:
   executableName: codex-status
   icon: build/icon-1.png
+  compression: maximum
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -23,6 +24,9 @@ nsis:
   allowToChangeInstallationDirectory: true
   runAfterFinish: true
 mac:
+  target:
+    - dmg
+  compression: maximum
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
@@ -35,8 +39,8 @@ dmg:
 linux:
   target:
     - AppImage
-    - snap
     - deb
+  compression: maximum
   maintainer: electronjs.org
   category: Utility
 appImage:
