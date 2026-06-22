@@ -91,7 +91,7 @@ export const DEFAULT_REFRESH_INTERVAL_SECONDS = 30
 export const MIN_REFRESH_INTERVAL_SECONDS = 5
 export const MAX_REFRESH_INTERVAL_SECONDS = 600
 export const CAPSULE_WINDOW_SIZE = {
-  width: 228,
+  width: 248,
   height: 42
 } as const
 
