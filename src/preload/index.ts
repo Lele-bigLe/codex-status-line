@@ -3,9 +3,11 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AppSettings,
   BootstrapPayload,
+  CapsuleDragMovePayload,
   CodexStatusApi,
   PreferencesPayload,
-  UsageSnapshot
+  UsageSnapshot,
+  WindowPreferences
 } from '../shared/capsule'
 
 const CHANNELS = {
@@ -13,6 +15,8 @@ const CHANNELS = {
   refresh: 'codex-status:refresh',
   updateSettings: 'codex-status:update-settings',
   closePanel: 'codex-status:close-panel',
+  moveCapsuleWindow: 'codex-status:move-capsule-window',
+  finishCapsuleWindowDrag: 'codex-status:finish-capsule-window-drag',
   snapshotUpdated: 'codex-status:snapshot-updated',
   preferencesUpdated: 'codex-status:preferences-updated',
   command: 'codex-status:command'
@@ -24,6 +28,10 @@ const api: CodexStatusApi = {
   updateSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.invoke(CHANNELS.updateSettings, patch) as Promise<PreferencesPayload>,
   closePanel: () => ipcRenderer.invoke(CHANNELS.closePanel) as Promise<void>,
+  moveCapsuleWindow: (payload: CapsuleDragMovePayload) =>
+    ipcRenderer.invoke(CHANNELS.moveCapsuleWindow, payload) as Promise<WindowPreferences>,
+  finishCapsuleWindowDrag: () =>
+    ipcRenderer.invoke(CHANNELS.finishCapsuleWindowDrag) as Promise<WindowPreferences>,
   onSnapshotUpdated: listener => subscribe(CHANNELS.snapshotUpdated, listener),
   onPreferencesUpdated: listener => subscribe(CHANNELS.preferencesUpdated, listener),
   onCommand: listener => subscribe(CHANNELS.command, listener)

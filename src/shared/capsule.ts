@@ -4,6 +4,8 @@ export type LocaleCode = 'zh-CN' | 'en-US'
 export type RateLimitSource = 'official' | 'local' | 'none'
 export type PanelView = 'details' | 'settings'
 export type RendererWindowRole = 'capsule' | 'panel'
+export type CapsuleViewMode = 'capsule' | 'orb'
+export type DockEdge = 'left' | 'right'
 export type RendererCommandType = 'show-panel-view'
 
 export interface RateLimitWindowSnapshot {
@@ -44,6 +46,8 @@ export interface AppSettings {
 export interface WindowPreferences {
   x?: number
   y?: number
+  viewMode: CapsuleViewMode
+  dockEdge?: DockEdge
 }
 
 export interface PanelPreferences {
@@ -72,6 +76,13 @@ export interface PreferencesPayload {
   panel: PanelPreferences
 }
 
+export interface CapsuleDragMovePayload {
+  screenX: number
+  screenY: number
+  offsetX: number
+  offsetY: number
+}
+
 export interface RendererCommandPayload {
   type: RendererCommandType
   panelView: PanelView
@@ -82,6 +93,8 @@ export interface CodexStatusApi {
   refreshStatus: () => Promise<UsageSnapshot>
   updateSettings: (patch: Partial<AppSettings>) => Promise<PreferencesPayload>
   closePanel: () => Promise<void>
+  moveCapsuleWindow: (payload: CapsuleDragMovePayload) => Promise<WindowPreferences>
+  finishCapsuleWindowDrag: () => Promise<WindowPreferences>
   onSnapshotUpdated: (listener: (snapshot: UsageSnapshot) => void) => () => void
   onPreferencesUpdated: (listener: (payload: PreferencesPayload) => void) => () => void
   onCommand: (listener: (payload: RendererCommandPayload) => void) => () => void
@@ -92,9 +105,19 @@ export const DEFAULT_REFRESH_INTERVAL_SECONDS = 30
 export const MIN_REFRESH_INTERVAL_SECONDS = 5
 export const MAX_REFRESH_INTERVAL_SECONDS = 600
 export const CAPSULE_WINDOW_SIZE = {
-  width: 248,
-  height: 42
+  width: 204,
+  height: 40
 } as const
+
+export const ORB_WINDOW_SIZE = {
+  width: 86,
+  height: 86
+} as const
+
+export const CAPSULE_EDGE_GAP = 8
+export const CAPSULE_DOCK_EDGE_GAP = 0
+export const CAPSULE_DOCK_THRESHOLD = 18
+export const CAPSULE_UNDOCK_THRESHOLD = 42
 
 export const PANEL_WINDOW_SIZE = {
   width: 416,
@@ -109,7 +132,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   launchAtLogin: false
 }
 
-export const DEFAULT_WINDOW_PREFERENCES: WindowPreferences = {}
+export const DEFAULT_WINDOW_PREFERENCES: WindowPreferences = {
+  viewMode: 'capsule'
+}
 
 export const DEFAULT_PANEL_PREFERENCES: PanelPreferences = {}
 
@@ -145,9 +170,14 @@ export function normalizeSettings(input: Partial<AppSettings> | undefined): AppS
 export function normalizeWindowPreferences(
   input: Partial<WindowPreferences> | undefined
 ): WindowPreferences {
+  const viewMode = isCapsuleViewMode(input?.viewMode) ? input.viewMode : DEFAULT_WINDOW_PREFERENCES.viewMode
+  const dockEdge = viewMode === 'orb' && isDockEdge(input?.dockEdge) ? input.dockEdge : undefined
+
   return {
     x: typeof input?.x === 'number' && Number.isFinite(input.x) ? Math.round(input.x) : undefined,
-    y: typeof input?.y === 'number' && Number.isFinite(input.y) ? Math.round(input.y) : undefined
+    y: typeof input?.y === 'number' && Number.isFinite(input.y) ? Math.round(input.y) : undefined,
+    viewMode,
+    dockEdge
   }
 }
 
@@ -179,4 +209,12 @@ function isPercentageMode(value: unknown): value is PercentageMode {
 
 function isLocaleCode(value: unknown): value is LocaleCode {
   return value === 'zh-CN' || value === 'en-US'
+}
+
+function isCapsuleViewMode(value: unknown): value is CapsuleViewMode {
+  return value === 'capsule' || value === 'orb'
+}
+
+function isDockEdge(value: unknown): value is DockEdge {
+  return value === 'left' || value === 'right'
 }

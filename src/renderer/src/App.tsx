@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_WINDOW_PREFERENCES,
   REFRESH_INTERVAL_OPTIONS,
   MAX_REFRESH_INTERVAL_SECONDS,
   MIN_REFRESH_INTERVAL_SECONDS,
@@ -11,14 +12,26 @@ import {
   type PercentageMode,
   type RateLimitWindowSnapshot,
   type RendererWindowRole,
-  type UsageSnapshot
+  type UsageSnapshot,
+  type WindowPreferences
 } from '../../shared/capsule'
 
 const DEFAULT_CUSTOM_REFRESH_INTERVAL_SECONDS = 40
+const CAPSULE_CLICK_DRAG_DISTANCE = 5
+
+interface CapsulePointerState {
+  pointerId: number
+  originScreenX: number
+  originScreenY: number
+  offsetX: number
+  offsetY: number
+  hasDragged: boolean
+}
 
 const COPY = {
   'zh-CN': {
     noData: '无数据',
+    refresh: '刷新',
     source: '来源',
     lastRefresh: '最近刷新',
     settings: '设置',
@@ -55,6 +68,7 @@ const COPY = {
   },
   'en-US': {
     noData: 'No data',
+    refresh: 'Refresh',
     source: 'Source',
     lastRefresh: 'Last refresh',
     settings: 'Settings',
@@ -94,10 +108,15 @@ const COPY = {
 function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<UsageSnapshot>(() => createEmptySnapshot())
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
+  const [windowPreferences, setWindowPreferences] = useState<WindowPreferences>({
+    ...DEFAULT_WINDOW_PREFERENCES
+  })
   const [windowRole, setWindowRole] = useState<RendererWindowRole>('capsule')
   const [panelView, setPanelView] = useState<PanelView>('details')
   const [customRefreshInput, setCustomRefreshInput] = useState(String(DEFAULT_SETTINGS.refreshIntervalSeconds))
+  const [capsulePointerActive, setCapsulePointerActive] = useState(false)
   const [ready, setReady] = useState(false)
+  const capsulePointerRef = useRef<CapsulePointerState | null>(null)
 
   useEffect(() => {
     let active = true
@@ -111,6 +130,7 @@ function App(): React.JSX.Element {
 
         setSnapshot(payload.snapshot)
         setSettings(payload.settings)
+        setWindowPreferences(payload.window)
         setWindowRole(payload.role)
         setPanelView(payload.panelView)
         setCustomRefreshInput(String(payload.settings.refreshIntervalSeconds))
@@ -134,6 +154,7 @@ function App(): React.JSX.Element {
 
     const disposePreferences = window.codexStatus.onPreferencesUpdated(payload => {
       setSettings(payload.settings)
+      setWindowPreferences(payload.window)
       setCustomRefreshInput(String(payload.settings.refreshIntervalSeconds))
     })
 
@@ -177,6 +198,21 @@ function App(): React.JSX.Element {
             body: copy.unavailableBody
           }
         : undefined
+  const capsuleDisplayPercent =
+    settings.percentageMode === 'used'
+      ? snapshot.rateLimits.primary?.usedPercent
+      : snapshot.rateLimits.primary?.remainingPercent
+  const capsuleTone = resolveMetricTone(capsuleDisplayPercent, settings.percentageMode)
+  const capsuleViewMode = windowPreferences.viewMode
+  const capsuleClassName = [
+    'capsule',
+    `capsule--${capsuleViewMode}`,
+    `capsule--${capsuleTone}`,
+    snapshot.isRefreshing ? 'is-refreshing' : '',
+    capsulePointerActive ? 'is-dragging' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   const detailRows = [
     {
@@ -218,20 +254,118 @@ function App(): React.JSX.Element {
     void window.codexStatus.closePanel()
   }
 
-  async function handleRefresh(event: React.MouseEvent<HTMLButtonElement>): Promise<void> {
-    event.stopPropagation()
-
+  async function handleRefresh(): Promise<void> {
     try {
       const nextSnapshot = await window.codexStatus.refreshStatus()
       setSnapshot(nextSnapshot)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setSnapshot(previous => ({
-        ...previous,
-        isRefreshing: false,
-        issues: Array.from(new Set([message, ...previous.issues])).slice(0, 6)
-      }))
+      recordSnapshotIssue(error)
     }
+  }
+
+  function handleCapsulePointerDown(event: React.PointerEvent<HTMLElement>): void {
+    if (event.button !== 0) {
+      return
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    capsulePointerRef.current = {
+      pointerId: event.pointerId,
+      originScreenX: event.screenX,
+      originScreenY: event.screenY,
+      offsetX: event.clientX - bounds.left,
+      offsetY: event.clientY - bounds.top,
+      hasDragged: false
+    }
+    setCapsulePointerActive(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function handleCapsulePointerMove(event: React.PointerEvent<HTMLElement>): void {
+    const pointerState = capsulePointerRef.current
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return
+    }
+
+    const distance = Math.hypot(
+      event.screenX - pointerState.originScreenX,
+      event.screenY - pointerState.originScreenY
+    )
+    if (distance < CAPSULE_CLICK_DRAG_DISTANCE && !pointerState.hasDragged) {
+      return
+    }
+
+    pointerState.hasDragged = true
+    event.preventDefault()
+
+    void window.codexStatus
+      .moveCapsuleWindow({
+        screenX: event.screenX,
+        screenY: event.screenY,
+        offsetX: pointerState.offsetX,
+        offsetY: pointerState.offsetY
+      })
+      .then(nextWindowPreferences => {
+        setWindowPreferences(nextWindowPreferences)
+      })
+      .catch(recordSnapshotIssue)
+  }
+
+  function handleCapsulePointerUp(event: React.PointerEvent<HTMLElement>): void {
+    void finishCapsulePointer(event, true)
+  }
+
+  function handleCapsulePointerCancel(event: React.PointerEvent<HTMLElement>): void {
+    void finishCapsulePointer(event, false)
+  }
+
+  async function finishCapsulePointer(
+    event: React.PointerEvent<HTMLElement>,
+    shouldRefreshOnClick: boolean
+  ): Promise<void> {
+    const pointerState = capsulePointerRef.current
+    if (!pointerState || pointerState.pointerId !== event.pointerId) {
+      return
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    capsulePointerRef.current = null
+    setCapsulePointerActive(false)
+
+    if (pointerState.hasDragged) {
+      try {
+        const nextWindowPreferences = await window.codexStatus.finishCapsuleWindowDrag()
+        setWindowPreferences(nextWindowPreferences)
+      } catch (error) {
+        recordSnapshotIssue(error)
+      }
+      return
+    }
+
+    if (shouldRefreshOnClick) {
+      void handleRefresh()
+    }
+  }
+
+  function handleCapsuleKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
+
+    event.preventDefault()
+    void handleRefresh()
+  }
+
+  function recordSnapshotIssue(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    setSnapshot(previous => ({
+      ...previous,
+      isRefreshing: false,
+      issues: Array.from(new Set([message, ...previous.issues])).slice(0, 6)
+    }))
   }
 
   async function handleSettingsPatch(patch: Partial<AppSettings>): Promise<void> {
@@ -298,31 +432,50 @@ function App(): React.JSX.Element {
     return (
       <div className="app-shell app-shell--capsule">
         <main className="widget">
-          <section className="capsule">
-            <div className="capsule__summary" aria-label={copy.details}>
-              <div className="capsule__metrics">
-                <MetricSegment
+          <section
+            aria-label={copy.refresh}
+            className={capsuleClassName}
+            onKeyDown={handleCapsuleKeyDown}
+            onPointerCancel={handleCapsulePointerCancel}
+            onPointerDown={handleCapsulePointerDown}
+            onPointerMove={handleCapsulePointerMove}
+            onPointerUp={handleCapsulePointerUp}
+            role="button"
+            tabIndex={0}
+          >
+            {capsuleViewMode === 'orb' ? (
+              <div className="capsule__edge-metrics" aria-hidden="true">
+                <EdgeMetricSegment
                   fallbackLabel="5h"
                   locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.primary}
                 />
-                <MetricSegment
+                <EdgeMetricSegment
                   fallbackLabel="7d"
                   locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.secondary}
                 />
               </div>
-            </div>
-            <button
-              aria-label={copy.lastRefresh}
-              className={`icon-button capsule__refresh ${snapshot.isRefreshing ? 'is-spinning' : ''}`}
-              onClick={handleRefresh}
-              type="button"
-            >
-              <RefreshIcon />
-            </button>
+            ) : (
+              <div className="capsule__summary" aria-hidden="true">
+                <div className="capsule__metrics">
+                  <MetricSegment
+                    fallbackLabel="5h"
+                    locale={settings.locale}
+                    percentageMode={settings.percentageMode}
+                    windowState={snapshot.rateLimits.primary}
+                  />
+                  <MetricSegment
+                    fallbackLabel="7d"
+                    locale={settings.locale}
+                    percentageMode={settings.percentageMode}
+                    windowState={snapshot.rateLimits.secondary}
+                  />
+                </div>
+              </div>
+            )}
           </section>
         </main>
       </div>
@@ -532,6 +685,33 @@ function MetricSegment({
         <span className="metric-segment__dot" />
         <span>{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
       </div>
+    </div>
+  )
+}
+
+function EdgeMetricSegment({
+  fallbackLabel,
+  locale,
+  percentageMode,
+  windowState
+}: {
+  fallbackLabel: string
+  locale: LocaleCode
+  percentageMode: PercentageMode
+  windowState?: RateLimitWindowSnapshot
+}): React.JSX.Element {
+  const displayPercent =
+    percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
+  const tone = resolveMetricTone(displayPercent, percentageMode)
+  const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
+
+  return (
+    <div className={`edge-metric edge-metric--${tone}`}>
+      <span className="edge-metric__heading">
+        <span className="edge-metric__label">{windowState?.label ?? fallbackLabel}</span>
+        <span className="edge-metric__reset">{resetText}</span>
+      </span>
+      <span className="edge-metric__value">{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
     </div>
   )
 }
@@ -798,41 +978,6 @@ function isSameDay(left: Date, right: Date): boolean {
     left.getFullYear() === right.getFullYear() &&
     left.getMonth() === right.getMonth() &&
     left.getDate() === right.getDate()
-  )
-}
-
-function RefreshIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <path
-        d="M7.4 8.2a6.2 6.2 0 0 1 9.7-.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M17.2 4.8v3.2h-3.2"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M16.6 15.8a6.2 6.2 0 0 1-9.7.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M6.8 19.2v-3.2h3.2"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-    </svg>
   )
 }
 

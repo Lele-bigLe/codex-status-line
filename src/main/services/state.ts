@@ -8,7 +8,9 @@ import {
   normalizePanelPreferences,
   normalizeSettings,
   normalizeWindowPreferences,
-  type PersistedState
+  type PanelPreferences,
+  type PersistedState,
+  type WindowPreferences
 } from '../../shared/capsule'
 
 const STATE_FILE_NAME = 'codex-status-state.json'
@@ -22,12 +24,8 @@ export async function loadPersistedState(): Promise<PersistedState> {
 
     return {
       settings: normalizeSettings(getRecord(parsed?.settings) as Partial<typeof DEFAULT_SETTINGS> | undefined),
-      window: normalizeWindowPreferences(
-        getRecord(parsed?.window) as Partial<typeof DEFAULT_WINDOW_PREFERENCES> | undefined
-      ),
-      panel: normalizePanelPreferences(
-        getRecord(parsed?.panel) as Partial<typeof DEFAULT_PANEL_PREFERENCES> | undefined
-      )
+      window: normalizeWindowPreferences(getRecord(parsed?.window) as Partial<WindowPreferences> | undefined),
+      panel: normalizePanelPreferences(getRecord(parsed?.panel) as Partial<PanelPreferences> | undefined)
     }
   } catch {
     return createDefaultState()
