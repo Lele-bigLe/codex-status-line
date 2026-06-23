@@ -110,8 +110,8 @@ export const CAPSULE_WINDOW_SIZE = {
 } as const
 
 export const ORB_WINDOW_SIZE = {
-  width: 86,
-  height: 86
+  width: 72,
+  height: 72
 } as const
 
 export const CAPSULE_EDGE_GAP = 8

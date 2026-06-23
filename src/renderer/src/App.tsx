@@ -447,13 +447,11 @@ function App(): React.JSX.Element {
               <div className="capsule__edge-metrics" aria-hidden="true">
                 <EdgeMetricSegment
                   fallbackLabel="5h"
-                  locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.primary}
                 />
                 <EdgeMetricSegment
                   fallbackLabel="7d"
-                  locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.secondary}
                 />
@@ -691,25 +689,21 @@ function MetricSegment({
 
 function EdgeMetricSegment({
   fallbackLabel,
-  locale,
   percentageMode,
   windowState
 }: {
   fallbackLabel: string
-  locale: LocaleCode
   percentageMode: PercentageMode
   windowState?: RateLimitWindowSnapshot
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
   const tone = resolveMetricTone(displayPercent, percentageMode)
-  const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
 
   return (
     <div className={`edge-metric edge-metric--${tone}`}>
       <span className="edge-metric__heading">
         <span className="edge-metric__label">{windowState?.label ?? fallbackLabel}</span>
-        <span className="edge-metric__reset">{resetText}</span>
       </span>
       <span className="edge-metric__value">{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
     </div>

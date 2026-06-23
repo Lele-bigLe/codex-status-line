@@ -145,7 +145,7 @@ body {
 
 .capsule--orb {
   grid-template-columns: 1fr;
-  padding: 8px;
+  padding: 7px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 31% 20%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.42) 38%, transparent 64%),
@@ -274,9 +274,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   min-height: 0;
-  padding: 2px 0;
+  padding: 1px 0;
 }
 
 .edge-metric:first-child {
@@ -284,12 +284,11 @@ body {
 }
 
 .edge-metric__heading {
-  max-width: 66px;
+  max-width: 48px;
   min-width: 0;
   display: inline-flex;
   align-items: baseline;
   justify-content: center;
-  gap: 3px;
   overflow: hidden;
   color: rgba(36, 45, 52, 0.74);
   line-height: 1;
@@ -299,28 +298,17 @@ body {
 .edge-metric__label {
   flex: 0 0 auto;
   color: rgba(36, 45, 52, 0.74);
-  font-size: 9.6px;
+  font-size: 10.5px;
   font-weight: 690;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-.edge-metric__reset {
-  min-width: 0;
-  overflow: hidden;
-  color: rgba(36, 45, 52, 0.58);
-  font-size: 7.6px;
-  font-weight: 610;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-}
-
 .edge-metric__value {
   min-width: 0;
   overflow: hidden;
-  max-width: 64px;
-  font-size: 12.8px;
+  max-width: 48px;
+  font-size: 14px;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
