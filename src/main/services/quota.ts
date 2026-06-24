@@ -3,11 +3,7 @@ import type { Dirent } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
-import type {
-  RateLimitSource,
-  RateLimitWindowSnapshot,
-  UsageSnapshot
-} from '../../shared/capsule'
+import type { RateLimitSource, RateLimitWindowSnapshot, UsageSnapshot } from '../../shared/capsule'
 
 interface RawRateLimit {
   windowMinutes?: number
@@ -29,6 +25,7 @@ interface JsonlFileEntry {
 
 interface OfficialRateLimitLookup {
   rateLimits?: UsageSnapshot['rateLimits']
+  canRefresh: boolean
   issue?: string
 }
 
@@ -37,6 +34,7 @@ interface CredentialLookup {
     accessToken: string
     accountId?: string
   }
+  canRefresh: boolean
   issue?: string
 }
 
@@ -99,6 +97,7 @@ export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
   return {
     available: hasRateLimits(rateLimits),
     isRefreshing: false,
+    canRefresh: officialLookup.canRefresh,
     generatedAt: new Date().toISOString(),
     rateLimits,
     rateLimitSource,
@@ -106,14 +105,17 @@ export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
     officialIssue,
     issues: Array.from(new Set(issues)).slice(0, 6),
     filesScanned: limitedFiles.length,
-    sessionsPath: checkedPaths.find(candidate => !missingPaths.includes(candidate))
+    sessionsPath: checkedPaths.find((candidate) => !missingPaths.includes(candidate))
   }
 }
 
 async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
   const credentialLookup = await readOfficialCodexCredentials()
   if (!credentialLookup.credentials) {
-    return { issue: credentialLookup.issue ?? '未找到 Codex OAuth 凭据' }
+    return {
+      canRefresh: credentialLookup.canRefresh,
+      issue: credentialLookup.issue ?? '未找到 Codex OAuth 凭据'
+    }
   }
 
   const headers: Record<string, string> = {
@@ -130,9 +132,11 @@ async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
     const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
     const observedAt = new Date()
     const rateLimits = parseOfficialRateLimits(response, observedAt)
-    return hasRateLimits(rateLimits) ? { rateLimits } : { issue: '官方接口未返回额度窗口' }
+    return hasRateLimits(rateLimits)
+      ? { rateLimits, canRefresh: true }
+      : { canRefresh: true, issue: '官方接口未返回额度窗口' }
   } catch (error) {
-    return { issue: error instanceof Error ? error.message : String(error) }
+    return { canRefresh: true, issue: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -143,27 +147,28 @@ async function readOfficialCodexCredentials(): Promise<CredentialLookup> {
     const content = await fs.readFile(authPath, 'utf8')
     const auth = parseJsonObject(content)
     if (!auth) {
-      return { issue: 'Codex auth.json 不是有效 JSON' }
+      return { canRefresh: false, issue: 'Codex auth.json 不是有效 JSON' }
     }
 
     if (getString(auth.auth_mode ?? auth.authMode) !== 'chatgpt') {
-      return { issue: 'Codex 当前不是 ChatGPT OAuth 模式' }
+      return { canRefresh: false, issue: 'Codex 当前不是 ChatGPT OAuth 模式' }
     }
 
     const tokens = getRecord(auth.tokens)
     const accessToken = getString(tokens?.access_token ?? tokens?.accessToken)
     if (!accessToken) {
-      return { issue: 'Codex auth.json 缺少 access_token' }
+      return { canRefresh: false, issue: 'Codex auth.json 缺少 access_token' }
     }
 
     return {
+      canRefresh: true,
       credentials: {
         accessToken,
         accountId: getString(tokens?.account_id ?? tokens?.accountId)
       }
     }
   } catch {
-    return { issue: '未找到 ~/.codex/auth.json' }
+    return { canRefresh: false, issue: '未找到 ~/.codex/auth.json' }
   }
 }
 
@@ -173,7 +178,7 @@ function requestJson(
   timeoutMs: number
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const request = https.request(new URL(url), { method: 'GET', headers }, response => {
+    const request = https.request(new URL(url), { method: 'GET', headers }, (response) => {
       const chunks: Buffer[] = []
 
       response.on('data', (chunk: Buffer) => {
@@ -210,10 +215,7 @@ function requestJson(
   })
 }
 
-function parseOfficialRateLimits(
-  response: unknown,
-  observedAt: Date
-): UsageSnapshot['rateLimits'] {
+function parseOfficialRateLimits(response: unknown, observedAt: Date): UsageSnapshot['rateLimits'] {
   const body = getRecord(response)
   const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
   if (!rateLimit) {
@@ -255,16 +257,20 @@ function createOfficialRateLimitWindow(
     return undefined
   }
 
-  return createRateLimitWindow(id, {
-    windowMinutes:
-      limitWindowSeconds !== undefined
-        ? limitWindowSeconds / 60
-        : id === 'primary'
-          ? FIVE_HOUR_MINUTES
-          : WEEKLY_MINUTES,
-    usedPercent,
-    resetsAtMs
-  }, observedAt)
+  return createRateLimitWindow(
+    id,
+    {
+      windowMinutes:
+        limitWindowSeconds !== undefined
+          ? limitWindowSeconds / 60
+          : id === 'primary'
+            ? FIVE_HOUR_MINUTES
+            : WEEKLY_MINUTES,
+      usedPercent,
+      resetsAtMs
+    },
+    observedAt
+  )
 }
 
 function resolveCodexConfigDir(): string {
@@ -349,10 +355,12 @@ async function collectJsonlFilesInto(
   }
 }
 
-async function readLatestRateLimitSnapshot(filePath: string): Promise<RateLimitSnapshot | undefined> {
+async function readLatestRateLimitSnapshot(
+  filePath: string
+): Promise<RateLimitSnapshot | undefined> {
   try {
     const content = await fs.readFile(filePath, 'utf8')
-    const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0)
+    const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0)
     let latestSnapshot: RateLimitSnapshot | undefined
 
     for (const rawLine of lines) {
@@ -457,7 +465,10 @@ function createRateLimitWindow(
   }
 }
 
-function resolveWindowLabel(id: 'primary' | 'secondary', windowMinutes: number | undefined): string {
+function resolveWindowLabel(
+  id: 'primary' | 'secondary',
+  windowMinutes: number | undefined
+): string {
   if (windowMinutes === undefined) {
     return id === 'primary' ? '5h' : '7d'
   }

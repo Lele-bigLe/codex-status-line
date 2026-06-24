@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   DEFAULT_SETTINGS,
   DEFAULT_WINDOW_PREFERENCES,
@@ -113,7 +113,9 @@ function App(): React.JSX.Element {
   })
   const [windowRole, setWindowRole] = useState<RendererWindowRole>('capsule')
   const [panelView, setPanelView] = useState<PanelView>('details')
-  const [customRefreshInput, setCustomRefreshInput] = useState(String(DEFAULT_SETTINGS.refreshIntervalSeconds))
+  const [customRefreshInput, setCustomRefreshInput] = useState(
+    String(DEFAULT_SETTINGS.refreshIntervalSeconds)
+  )
   const [capsulePointerActive, setCapsulePointerActive] = useState(false)
   const [ready, setReady] = useState(false)
   const capsulePointerRef = useRef<CapsulePointerState | null>(null)
@@ -123,7 +125,7 @@ function App(): React.JSX.Element {
 
     void window.codexStatus
       .bootstrap()
-      .then(payload => {
+      .then((payload) => {
         if (!active) {
           return
         }
@@ -136,7 +138,7 @@ function App(): React.JSX.Element {
         setCustomRefreshInput(String(payload.settings.refreshIntervalSeconds))
         setReady(true)
       })
-      .catch(error => {
+      .catch((error) => {
         if (!active) {
           return
         }
@@ -148,17 +150,17 @@ function App(): React.JSX.Element {
         setReady(true)
       })
 
-    const disposeSnapshot = window.codexStatus.onSnapshotUpdated(nextSnapshot => {
+    const disposeSnapshot = window.codexStatus.onSnapshotUpdated((nextSnapshot) => {
       setSnapshot(nextSnapshot)
     })
 
-    const disposePreferences = window.codexStatus.onPreferencesUpdated(payload => {
+    const disposePreferences = window.codexStatus.onPreferencesUpdated((payload) => {
       setSettings(payload.settings)
       setWindowPreferences(payload.window)
       setCustomRefreshInput(String(payload.settings.refreshIntervalSeconds))
     })
 
-    const disposeCommand = window.codexStatus.onCommand(payload => {
+    const disposeCommand = window.codexStatus.onCommand((payload) => {
       if (payload.type !== 'show-panel-view') {
         return
       }
@@ -175,9 +177,14 @@ function App(): React.JSX.Element {
   }, [])
 
   const copy = COPY[settings.locale]
-  const fixedRefreshValues = REFRESH_INTERVAL_OPTIONS.map(option => String(option))
-  const isCustomRefreshInterval = !fixedRefreshValues.includes(String(settings.refreshIntervalSeconds))
-  const intervalControlValue = isCustomRefreshInterval ? 'custom' : String(settings.refreshIntervalSeconds)
+  const canRefresh = snapshot.canRefresh !== false
+  const fixedRefreshValues = REFRESH_INTERVAL_OPTIONS.map((option) => String(option))
+  const isCustomRefreshInterval = !fixedRefreshValues.includes(
+    String(settings.refreshIntervalSeconds)
+  )
+  const intervalControlValue = isCustomRefreshInterval
+    ? 'custom'
+    : String(settings.refreshIntervalSeconds)
   const canEditCustomRefresh = settings.refreshMode === 'auto' && isCustomRefreshInterval
   const sourceLabel =
     snapshot.rateLimitSource === 'official'
@@ -209,6 +216,7 @@ function App(): React.JSX.Element {
     `capsule--${capsuleViewMode}`,
     `capsule--${capsuleTone}`,
     snapshot.isRefreshing ? 'is-refreshing' : '',
+    canRefresh ? '' : 'is-static',
     capsulePointerActive ? 'is-dragging' : ''
   ]
     .filter(Boolean)
@@ -219,13 +227,17 @@ function App(): React.JSX.Element {
       icon: <ServerIcon />,
       label: copy.source,
       value: sourceValue,
-      hint: sourceLabel
+      badge: snapshot.rateLimitSource === 'none' ? undefined : sourceLabel
     },
     {
       icon: <ClockIcon />,
       label: `${snapshot.rateLimits.primary?.label ?? '5h'} ${copy.reset}`,
       value: formatAbsoluteDate(snapshot.rateLimits.primary?.resetsAt, settings.locale),
-      hint: formatRelativeDuration(snapshot.rateLimits.primary?.resetsInSeconds, settings.locale)
+      hint: formatRelativeDuration(
+        snapshot.rateLimits.primary?.resetsInSeconds,
+        settings.locale,
+        true
+      )
     },
     {
       icon: <CalendarIcon />,
@@ -255,6 +267,10 @@ function App(): React.JSX.Element {
   }
 
   async function handleRefresh(): Promise<void> {
+    if (!canRefresh) {
+      return
+    }
+
     try {
       const nextSnapshot = await window.codexStatus.refreshStatus()
       setSnapshot(nextSnapshot)
@@ -305,7 +321,7 @@ function App(): React.JSX.Element {
         offsetX: pointerState.offsetX,
         offsetY: pointerState.offsetY
       })
-      .then(nextWindowPreferences => {
+      .then((nextWindowPreferences) => {
         setWindowPreferences(nextWindowPreferences)
       })
       .catch(recordSnapshotIssue)
@@ -345,7 +361,7 @@ function App(): React.JSX.Element {
       return
     }
 
-    if (shouldRefreshOnClick) {
+    if (shouldRefreshOnClick && canRefresh) {
       void handleRefresh()
     }
   }
@@ -355,13 +371,17 @@ function App(): React.JSX.Element {
       return
     }
 
+    if (!canRefresh) {
+      return
+    }
+
     event.preventDefault()
     void handleRefresh()
   }
 
   function recordSnapshotIssue(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
-    setSnapshot(previous => ({
+    setSnapshot((previous) => ({
       ...previous,
       isRefreshing: false,
       issues: Array.from(new Set([message, ...previous.issues])).slice(0, 6)
@@ -433,25 +453,27 @@ function App(): React.JSX.Element {
       <div className="app-shell app-shell--capsule">
         <main className="widget">
           <section
-            aria-label={copy.refresh}
+            aria-label={canRefresh ? copy.refresh : sourceValue}
             className={capsuleClassName}
             onKeyDown={handleCapsuleKeyDown}
             onPointerCancel={handleCapsulePointerCancel}
             onPointerDown={handleCapsulePointerDown}
             onPointerMove={handleCapsulePointerMove}
             onPointerUp={handleCapsulePointerUp}
-            role="button"
-            tabIndex={0}
+            role={canRefresh ? 'button' : undefined}
+            tabIndex={canRefresh ? 0 : -1}
           >
             {capsuleViewMode === 'orb' ? (
               <div className="capsule__edge-metrics" aria-hidden="true">
                 <EdgeMetricSegment
                   fallbackLabel="5h"
+                  locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.primary}
                 />
                 <EdgeMetricSegment
                   fallbackLabel="7d"
+                  locale={settings.locale}
                   percentageMode={settings.percentageMode}
                   windowState={snapshot.rateLimits.secondary}
                 />
@@ -488,40 +510,55 @@ function App(): React.JSX.Element {
         </div>
         {panelView === 'details' ? (
           <div className="panel__body panel__body--details">
-            <div className="panel__header panel__header--details">
-              <div>
-                <p className="panel__eyebrow">{sourceLabel}</p>
-                <h2 className="panel__title">{copy.details}</h2>
-              </div>
-            </div>
-
-            <div className="panel__rows">
-              {detailRows.map(row => (
-                <DetailRow key={row.label} hint={row.hint} icon={row.icon} label={row.label} value={row.value} />
-              ))}
-            </div>
-
-            {fallbackBanner ? (
-              <div className="fallback-card">
-                <div className="fallback-card__icon">
-                  <AlertIcon />
-                </div>
-                <div className="fallback-card__content">
-                  <p className="fallback-card__title">{fallbackBanner.title}</p>
-                  <p className="fallback-card__body">{fallbackBanner.body}</p>
+            <div className="panel__content">
+              <div className="panel__header panel__header--details">
+                <div>
+                  <p className="panel__eyebrow">{sourceLabel}</p>
+                  <h2 className="panel__title">{copy.details}</h2>
                 </div>
               </div>
-            ) : null}
 
-            <div className="panel__meta">
-              <span>
-                {copy.scannedFiles} {snapshot.filesScanned} {copy.filesUnit}
-              </span>
-              {snapshot.sessionsPath ? (
-                <span className="panel__meta-path">
-                  {copy.path}: {snapshot.sessionsPath}
-                </span>
+              <div className="panel__rows">
+                {detailRows.map((row) => (
+                  <DetailRow
+                    key={row.label}
+                    badge={row.badge}
+                    hint={row.hint}
+                    icon={row.icon}
+                    label={row.label}
+                    value={row.value}
+                  />
+                ))}
+              </div>
+
+              {fallbackBanner ? (
+                <div className="fallback-card">
+                  <div className="fallback-card__icon">
+                    <AlertIcon />
+                  </div>
+                  <div className="fallback-card__content">
+                    <p className="fallback-card__title">{fallbackBanner.title}</p>
+                    <p className="fallback-card__body">{fallbackBanner.body}</p>
+                  </div>
+                </div>
               ) : null}
+
+              <div className="panel__meta">
+                <span className="panel__meta-row">
+                  <FileIcon />
+                  <span>
+                    {copy.scannedFiles} {snapshot.filesScanned} {copy.filesUnit}
+                  </span>
+                </span>
+                {snapshot.sessionsPath ? (
+                  <span className="panel__meta-row panel__meta-row--path">
+                    <FolderIcon />
+                    <span>
+                      {copy.path}: {snapshot.sessionsPath}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
             </div>
 
             <div className="panel__footer">
@@ -537,107 +574,122 @@ function App(): React.JSX.Element {
           </div>
         ) : (
           <div className="panel__body panel__body--settings">
-            <div className="panel__header">
-              <div>
-                <p className="panel__eyebrow">Codex</p>
-                <h2 className="panel__title">{copy.settings}</h2>
-              </div>
-            </div>
-
-            <div className="settings-list">
-              <SettingField label={copy.refreshMode}>
-                <SegmentedControl
-                  onChange={value => {
-                    void handleSettingsPatch({ refreshMode: value as AppSettings['refreshMode'] })
-                  }}
-                  options={[
-                    { label: copy.auto, value: 'auto' },
-                    { label: copy.manual, value: 'manual' }
-                  ]}
-                  value={settings.refreshMode}
-                />
-              </SettingField>
-
-              <SettingField label={copy.refreshInterval}>
-                <div className="setting-stack">
-                  <SegmentedControl
-                    disabled={settings.refreshMode === 'manual'}
-                    onChange={selectRefreshInterval}
-                    options={[
-                      ...REFRESH_INTERVAL_OPTIONS.map(option => ({
-                        label: `${option}s`,
-                        value: String(option)
-                      })),
-                      { label: copy.custom, value: 'custom' }
-                    ]}
-                    value={intervalControlValue}
-                  />
-                  <label
-                    className={`inline-input ${canEditCustomRefresh ? 'is-active' : 'is-disabled'}`}
-                  >
-                    <span>{copy.customInterval}</span>
-                    <input
-                      disabled={!canEditCustomRefresh}
-                      max={MAX_REFRESH_INTERVAL_SECONDS}
-                      min={MIN_REFRESH_INTERVAL_SECONDS}
-                      onBlur={commitCustomRefreshInterval}
-                      onChange={event => {
-                        setCustomRefreshInput(event.target.value)
-                      }}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') {
-                          event.currentTarget.blur()
-                        }
-                      }}
-                      step={1}
-                      type="number"
-                      value={customRefreshInput}
-                    />
-                    <em>s</em>
-                  </label>
+            <div className="panel__content">
+              <div className="panel__header">
+                <div>
+                  <p className="panel__eyebrow">CODEX</p>
+                  <h2 className="panel__title">{copy.settings}</h2>
                 </div>
-              </SettingField>
+              </div>
 
-              <SettingField label={copy.percentageMode}>
-                <SegmentedControl
-                  onChange={value => {
-                    void handleSettingsPatch({
-                      percentageMode: value as PercentageMode
-                    })
-                  }}
-                  options={[
-                    { label: copy.remaining, value: 'remaining' },
-                    { label: copy.used, value: 'used' }
-                  ]}
-                  value={settings.percentageMode}
-                />
-              </SettingField>
+              <div className="settings-list">
+                <div className="settings-section">
+                  <SettingField label={copy.refreshMode}>
+                    <SegmentedControl
+                      onChange={(value) => {
+                        void handleSettingsPatch({
+                          refreshMode: value as AppSettings['refreshMode']
+                        })
+                      }}
+                      options={[
+                        { label: copy.auto, value: 'auto' },
+                        { label: copy.manual, value: 'manual' }
+                      ]}
+                      value={settings.refreshMode}
+                    />
+                  </SettingField>
 
-              <SettingField label={copy.language}>
-                <SegmentedControl
-                  onChange={value => {
-                    void handleSettingsPatch({
-                      locale: value as LocaleCode
-                    })
-                  }}
-                  options={[
-                    { label: '简中', value: 'zh-CN' },
-                    { label: 'English', value: 'en-US' }
-                  ]}
-                  value={settings.locale}
-                />
-              </SettingField>
+                  <SettingField label={copy.refreshInterval}>
+                    <div className="setting-stack">
+                      <SegmentedControl
+                        disabled={settings.refreshMode === 'manual'}
+                        onChange={selectRefreshInterval}
+                        options={[
+                          ...REFRESH_INTERVAL_OPTIONS.map((option) => ({
+                            label: `${option}s`,
+                            value: String(option)
+                          })),
+                          { label: copy.custom, value: 'custom' }
+                        ]}
+                        value={intervalControlValue}
+                      />
+                      <label
+                        className={`inline-input ${canEditCustomRefresh ? 'is-active' : 'is-disabled'}`}
+                      >
+                        <span>{copy.customInterval}</span>
+                        <input
+                          disabled={!canEditCustomRefresh}
+                          max={MAX_REFRESH_INTERVAL_SECONDS}
+                          min={MIN_REFRESH_INTERVAL_SECONDS}
+                          onBlur={commitCustomRefreshInterval}
+                          onChange={(event) => {
+                            setCustomRefreshInput(event.target.value)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur()
+                            }
+                          }}
+                          step={1}
+                          type="number"
+                          value={customRefreshInput}
+                        />
+                        <em>s</em>
+                      </label>
+                    </div>
+                  </SettingField>
+                </div>
 
-              <SettingField label={copy.launchAtLogin}>
-                <ToggleSwitch
-                  checked={settings.launchAtLogin}
-                  offLabel={copy.disabled}
-                  onChange={checked => {
-                    void handleSettingsPatch({ launchAtLogin: checked })
-                  }}
-                  onLabel={copy.enabled}
-                />
-              </SettingField>
+                <div className="settings-section">
+                  <SettingField label={copy.percentageMode}>
+                    <SegmentedControl
+                      onChange={(value) => {
+                        void handleSettingsPatch({
+                          percentageMode: value as PercentageMode
+                        })
+                      }}
+                      options={[
+                        { label: copy.remaining, value: 'remaining' },
+                        { label: copy.used, value: 'used' }
+                      ]}
+                      value={settings.percentageMode}
+                    />
+                  </SettingField>
+                </div>
+
+                <div className="settings-section">
+                  <SettingField label={copy.language}>
+                    <SegmentedControl
+                      onChange={(value) => {
+                        void handleSettingsPatch({
+                          locale: value as LocaleCode
+                        })
+                      }}
+                      options={[
+                        { label: '简中', value: 'zh-CN' },
+                        { label: 'English', value: 'en-US' }
+                      ]}
+                      value={settings.locale}
+                    />
+                  </SettingField>
+                </div>
+
+                <div className="settings-section">
+                  <SettingField label={copy.launchAtLogin}>
+                    <div className="setting-row">
+                      <span>{copy.launchAtLogin}</span>
+                      <ToggleSwitch
+                        checked={settings.launchAtLogin}
+                        offLabel={copy.disabled}
+                        onChange={(checked) => {
+                          void handleSettingsPatch({ launchAtLogin: checked })
+                        }}
+                        onLabel={copy.enabled}
+                      />
+                    </div>
+                  </SettingField>
+                </div>
+              </div>
             </div>
 
             <div className="panel__footer">
@@ -645,9 +697,13 @@ function App(): React.JSX.Element {
                 <ChevronLeftIcon />
                 <span>{copy.back}</span>
               </button>
-              <button className="ghost-button" onClick={closePanel} type="button">
-                <CloseIcon />
+              <button
+                className="ghost-button ghost-button--accent"
+                onClick={closePanel}
+                type="button"
+              >
                 <span>{copy.done}</span>
+                <ChevronRightIcon />
               </button>
             </div>
           </div>
@@ -672,50 +728,63 @@ function MetricSegment({
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
   const tone = resolveMetricTone(displayPercent, percentageMode)
   const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
+  const progressStyle = createMetricProgressStyle(displayPercent)
 
   return (
-    <div className="metric-segment">
+    <div className={`metric-segment metric-segment--${tone}`} style={progressStyle}>
       <span className="metric-segment__label">
-        {windowState?.label ?? fallbackLabel}
+        <span className="metric-segment__name">{windowState?.label ?? fallbackLabel}</span>
         <span className="metric-segment__reset">{resetText}</span>
       </span>
-      <div className={`metric-segment__value metric-segment__value--${tone}`}>
-        <span className="metric-segment__dot" />
+      <div className="metric-segment__value">
         <span>{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
       </div>
+      <span className="metric-segment__progress" aria-hidden="true">
+        <span />
+      </span>
     </div>
   )
 }
 
 function EdgeMetricSegment({
   fallbackLabel,
+  locale,
   percentageMode,
   windowState
 }: {
   fallbackLabel: string
+  locale: LocaleCode
   percentageMode: PercentageMode
   windowState?: RateLimitWindowSnapshot
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
   const tone = resolveMetricTone(displayPercent, percentageMode)
+  const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
+  const progressStyle = createMetricProgressStyle(displayPercent)
 
   return (
-    <div className={`edge-metric edge-metric--${tone}`}>
-      <span className="edge-metric__heading">
-        <span className="edge-metric__label">{windowState?.label ?? fallbackLabel}</span>
+    <div className={`edge-metric edge-metric--${tone}`} style={progressStyle}>
+      <span className="edge-metric__label">{windowState?.label ?? fallbackLabel}</span>
+      <span className="edge-metric__reset">{resetText}</span>
+      <span className="edge-metric__value">
+        {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
       </span>
-      <span className="edge-metric__value">{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
+      <span className="edge-metric__progress" aria-hidden="true">
+        <span />
+      </span>
     </div>
   )
 }
 
 function DetailRow({
+  badge,
   icon,
   label,
   value,
   hint
 }: {
+  badge?: string
   icon: React.JSX.Element
   label: string
   value: string
@@ -729,6 +798,7 @@ function DetailRow({
       </div>
       <div className="detail-row__value-group">
         <span className="detail-row__value">{value}</span>
+        {badge ? <span className="detail-row__badge">{badge}</span> : null}
         {hint ? <span className="detail-row__hint">{hint}</span> : null}
       </div>
     </div>
@@ -763,7 +833,7 @@ function SegmentedControl({
 }): React.JSX.Element {
   return (
     <div className={`segmented ${disabled ? 'is-disabled' : ''}`}>
-      {options.map(option => (
+      {options.map((option) => (
         <button
           className={option.value === value ? 'is-active' : ''}
           disabled={disabled}
@@ -792,6 +862,7 @@ function ToggleSwitch({
   return (
     <button
       aria-checked={checked}
+      aria-label={checked ? onLabel : offLabel}
       className={`toggle-switch ${checked ? 'is-checked' : ''}`}
       onClick={() => onChange(!checked)}
       role="switch"
@@ -800,9 +871,17 @@ function ToggleSwitch({
       <span className="toggle-switch__track" aria-hidden="true">
         <span className="toggle-switch__thumb" />
       </span>
-      <span className="toggle-switch__label">{checked ? onLabel : offLabel}</span>
     </button>
   )
+}
+
+function createMetricProgressStyle(displayPercent: number | undefined): CSSProperties {
+  const progress =
+    displayPercent === undefined || !Number.isFinite(displayPercent)
+      ? 0
+      : Math.min(100, Math.max(0, displayPercent))
+
+  return { '--metric-progress': `${progress}%` } as CSSProperties
 }
 
 function resolveMetricTone(
@@ -866,7 +945,11 @@ function formatAbsoluteDate(value: string | undefined, locale: LocaleCode): stri
     : `${new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(date)}, ${time}`
 }
 
-function formatRelativeDuration(value: number | undefined, locale: LocaleCode): string | undefined {
+function formatRelativeDuration(
+  value: number | undefined,
+  locale: LocaleCode,
+  withSuffix = false
+): string | undefined {
   if (value === undefined) {
     return undefined
   }
@@ -887,7 +970,7 @@ function formatRelativeDuration(value: number | undefined, locale: LocaleCode): 
     if (minutes > 0 || parts.length === 0) {
       parts.push(`${minutes}分`)
     }
-    return `(${parts.slice(0, 2).join(' ')})`
+    return `${parts.slice(0, 2).join('')}${withSuffix ? '后' : ''}`
   }
 
   const parts: string[] = []
@@ -900,7 +983,7 @@ function formatRelativeDuration(value: number | undefined, locale: LocaleCode): 
   if (minutes > 0 || parts.length === 0) {
     parts.push(`${minutes}m`)
   }
-  return `(${parts.slice(0, 2).join(' ')})`
+  return parts.slice(0, 2).join(' ')
 }
 
 function formatRelativeDate(value: string | undefined, locale: LocaleCode): string | undefined {
@@ -960,11 +1043,14 @@ function formatCapsuleResetTime(value: string | undefined, locale: LocaleCode): 
 }
 
 function normalizeCustomRefreshInterval(value: number): number {
-  return Math.min(MAX_REFRESH_INTERVAL_SECONDS, Math.max(MIN_REFRESH_INTERVAL_SECONDS, Math.round(value)))
+  return Math.min(
+    MAX_REFRESH_INTERVAL_SECONDS,
+    Math.max(MIN_REFRESH_INTERVAL_SECONDS, Math.round(value))
+  )
 }
 
 function isFixedRefreshInterval(value: number): boolean {
-  return REFRESH_INTERVAL_OPTIONS.some(option => option === value)
+  return REFRESH_INTERVAL_OPTIONS.some((option) => option === value)
 }
 
 function isSameDay(left: Date, right: Date): boolean {
@@ -978,7 +1064,12 @@ function isSameDay(left: Date, right: Date): boolean {
 function CloseIcon(): React.JSX.Element {
   return (
     <svg fill="none" viewBox="0 0 24 24">
-      <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeLinecap="round" strokeWidth="1.85" />
+      <path
+        d="m7 7 10 10M17 7 7 17"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.85"
+      />
     </svg>
   )
 }
@@ -986,25 +1077,14 @@ function CloseIcon(): React.JSX.Element {
 function ServerIcon(): React.JSX.Element {
   return (
     <svg fill="none" viewBox="0 0 24 24">
-      <rect
-        height="5"
-        rx="1.5"
+      <rect height="5" rx="1.5" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="5" />
+      <rect height="5" rx="1.5" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="14" />
+      <path
+        d="M8 7.5h.01M8 16.5h.01M12 7.5h6M12 16.5h6"
         stroke="currentColor"
+        strokeLinecap="round"
         strokeWidth="1.75"
-        width="16"
-        x="4"
-        y="5"
       />
-      <rect
-        height="5"
-        rx="1.5"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        width="16"
-        x="4"
-        y="14"
-      />
-      <path d="M8 7.5h.01M8 16.5h.01M12 7.5h6M12 16.5h6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.75" />
     </svg>
   )
 }
@@ -1013,7 +1093,13 @@ function ClockIcon(): React.JSX.Element {
   return (
     <svg fill="none" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8.25" stroke="currentColor" strokeWidth="1.75" />
-      <path d="M12 7.5v5l3 2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
+      <path
+        d="M12 7.5v5l3 2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
     </svg>
   )
 }
@@ -1021,16 +1107,45 @@ function ClockIcon(): React.JSX.Element {
 function CalendarIcon(): React.JSX.Element {
   return (
     <svg fill="none" viewBox="0 0 24 24">
-      <rect
-        height="14"
-        rx="2"
+      <rect height="14" rx="2" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="6" />
+      <path
+        d="M8 3.75v4.5M16 3.75v4.5M4 10.5h16"
         stroke="currentColor"
+        strokeLinecap="round"
         strokeWidth="1.75"
-        width="16"
-        x="4"
-        y="6"
       />
-      <path d="M8 3.75v4.5M16 3.75v4.5M4 10.5h16" stroke="currentColor" strokeLinecap="round" strokeWidth="1.75" />
+    </svg>
+  )
+}
+
+function FileIcon(): React.JSX.Element {
+  return (
+    <svg fill="none" viewBox="0 0 24 24">
+      <path
+        d="M7 3.75h6.2L17 7.55V20.25H7z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
+      <path
+        d="M13 3.75V8h4M9.25 12.25h5.5M9.25 15.75h5.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.75"
+      />
+    </svg>
+  )
+}
+
+function FolderIcon(): React.JSX.Element {
+  return (
+    <svg fill="none" viewBox="0 0 24 24">
+      <path
+        d="M3.75 8.25a2 2 0 0 1 2-2h4.05l2 2h6.45a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
     </svg>
   )
 }
@@ -1045,7 +1160,13 @@ function HistoryIcon(): React.JSX.Element {
         strokeLinejoin="round"
         strokeWidth="1.75"
       />
-      <path d="M12 8.25V12l2.75 1.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
+      <path
+        d="M12 8.25V12l2.75 1.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
     </svg>
   )
 }
@@ -1092,6 +1213,20 @@ function ChevronLeftIcon(): React.JSX.Element {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.75"
+      />
+    </svg>
+  )
+}
+
+function ChevronRightIcon(): React.JSX.Element {
+  return (
+    <svg fill="none" viewBox="0 0 24 24">
+      <path
+        d="m9 5 7 7-7 7"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.85"
       />
     </svg>
   )

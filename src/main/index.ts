@@ -255,7 +255,6 @@ if (hasSingleInstanceLock) {
     registerIpcHandlers()
     mainWindow = createCapsuleWindow()
     createTray()
-    syncRefreshTimer()
     void refreshStatus()
 
     app.on('activate', function () {
@@ -292,6 +291,10 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(CHANNELS.refresh, async () => {
+    if (!canRefreshStatus()) {
+      return currentSnapshot
+    }
+
     await refreshStatus()
     return currentSnapshot
   })
@@ -312,7 +315,7 @@ function registerIpcHandlers(): void {
     refreshTrayMenu()
     broadcastPreferences()
 
-    if (persistedState.settings.refreshMode === 'auto') {
+    if (persistedState.settings.refreshMode === 'auto' && canRefreshStatus()) {
       void refreshStatus()
     }
 
@@ -350,6 +353,7 @@ function refreshTrayMenu(): void {
   const menuTemplate: MenuItemConstructorOptions[] = [
     {
       label: labels.refresh,
+      enabled: canRefreshStatus(),
       click: () => {
         void refreshStatus()
       }
@@ -489,7 +493,7 @@ function quitApp(): void {
 
 function syncRefreshTimer(): void {
   clearRefreshTimer()
-  if (persistedState.settings.refreshMode !== 'auto') {
+  if (persistedState.settings.refreshMode !== 'auto' || !canRefreshStatus()) {
     return
   }
 
@@ -508,6 +512,11 @@ function clearRefreshTimer(): void {
 async function refreshStatus(): Promise<void> {
   if (refreshPromise) {
     return refreshPromise
+  }
+
+  if (!canRefreshStatus() && currentSnapshot.generatedAt) {
+    syncRefreshTimer()
+    return
   }
 
   currentSnapshot = {
@@ -534,11 +543,16 @@ async function refreshStatus(): Promise<void> {
       }
       broadcastSnapshot()
       refreshTrayMenu()
+      syncRefreshTimer()
       refreshPromise = undefined
     }
   })()
 
   return refreshPromise
+}
+
+function canRefreshStatus(): boolean {
+  return currentSnapshot.canRefresh !== false
 }
 
 function broadcastSnapshot(): void {
@@ -619,7 +633,10 @@ function finishCapsuleWindowDrag(): WindowPreferences {
   return persistedState.window
 }
 
-function applyCapsuleWindowPreferences(preferences: WindowPreferences, allowFloatingOrb = false): void {
+function applyCapsuleWindowPreferences(
+  preferences: WindowPreferences,
+  allowFloatingOrb = false
+): void {
   const bounds = resolveCapsuleBounds(preferences, allowFloatingOrb)
   persistedState = {
     ...persistedState,
@@ -635,17 +652,30 @@ function applyCapsuleWindowPreferences(preferences: WindowPreferences, allowFloa
 
 function resolveDraggedCapsuleWindow(payload: CapsuleDragMovePayload): WindowPreferences {
   const currentBounds = mainWindow?.getBounds() ?? resolveCapsuleBounds(persistedState.window)
-  const offsetX = clamp(getFiniteNumber(payload.offsetX, currentBounds.width / 2), 0, currentBounds.width)
-  const offsetY = clamp(getFiniteNumber(payload.offsetY, currentBounds.height / 2), 0, currentBounds.height)
+  const offsetX = clamp(
+    getFiniteNumber(payload.offsetX, currentBounds.width / 2),
+    0,
+    currentBounds.width
+  )
+  const offsetY = clamp(
+    getFiniteNumber(payload.offsetY, currentBounds.height / 2),
+    0,
+    currentBounds.height
+  )
   const screenX = getFiniteNumber(payload.screenX, currentBounds.x + offsetX)
   const screenY = getFiniteNumber(payload.screenY, currentBounds.y + offsetY)
   const desiredX = Math.round(screenX - offsetX)
   const desiredY = Math.round(screenY - offsetY)
   const workArea = getTargetWorkArea(desiredX, desiredY)
   const workAreaRight = workArea.x + workArea.width
-  const isDraggingOrb = persistedState.window.viewMode === 'orb' && Boolean(persistedState.window.dockEdge)
+  const isDraggingOrb =
+    persistedState.window.viewMode === 'orb' && Boolean(persistedState.window.dockEdge)
   const size = isDraggingOrb ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
-  const x = clamp(desiredX, workArea.x + CAPSULE_DOCK_EDGE_GAP, workAreaRight - size.width - CAPSULE_DOCK_EDGE_GAP)
+  const x = clamp(
+    desiredX,
+    workArea.x + CAPSULE_DOCK_EDGE_GAP,
+    workAreaRight - size.width - CAPSULE_DOCK_EDGE_GAP
+  )
   const y = clamp(
     desiredY,
     workArea.y + CAPSULE_EDGE_GAP,
@@ -711,8 +741,10 @@ function resolveSettledOrbWindow(preferences: WindowPreferences): WindowPreferen
   const workArea = getTargetWorkArea(orbBounds.x, orbBounds.y)
   const workAreaRight = workArea.x + workArea.width
   const orbRight = orbBounds.x + ORB_WINDOW_SIZE.width
-  const keepsLeftDock = preferences.dockEdge === 'left' && orbBounds.x <= workArea.x + CAPSULE_UNDOCK_THRESHOLD
-  const keepsRightDock = preferences.dockEdge === 'right' && orbRight >= workAreaRight - CAPSULE_UNDOCK_THRESHOLD
+  const keepsLeftDock =
+    preferences.dockEdge === 'left' && orbBounds.x <= workArea.x + CAPSULE_UNDOCK_THRESHOLD
+  const keepsRightDock =
+    preferences.dockEdge === 'right' && orbRight >= workAreaRight - CAPSULE_UNDOCK_THRESHOLD
 
   if (keepsLeftDock || keepsRightDock) {
     return {
@@ -741,7 +773,10 @@ function resolveSettledOrbWindow(preferences: WindowPreferences): WindowPreferen
   }
 }
 
-function resolveCapsuleBounds(windowPreferences: WindowPreferences, allowFloatingOrb = false): Rectangle {
+function resolveCapsuleBounds(
+  windowPreferences: WindowPreferences,
+  allowFloatingOrb = false
+): Rectangle {
   const viewMode =
     windowPreferences.viewMode === 'orb' && (windowPreferences.dockEdge || allowFloatingOrb)
       ? windowPreferences.viewMode
@@ -750,8 +785,14 @@ function resolveCapsuleBounds(windowPreferences: WindowPreferences, allowFloatin
   const workArea = getTargetWorkArea(windowPreferences.x, windowPreferences.y)
   const fallbackX = workArea.x + workArea.width - width - 40
   const fallbackY = workArea.y + 36
-  const maxX = Math.max(workArea.x + CAPSULE_EDGE_GAP, workArea.x + workArea.width - width - CAPSULE_EDGE_GAP)
-  const maxY = Math.max(workArea.y + CAPSULE_EDGE_GAP, workArea.y + workArea.height - height - CAPSULE_EDGE_GAP)
+  const maxX = Math.max(
+    workArea.x + CAPSULE_EDGE_GAP,
+    workArea.x + workArea.width - width - CAPSULE_EDGE_GAP
+  )
+  const maxY = Math.max(
+    workArea.y + CAPSULE_EDGE_GAP,
+    workArea.y + workArea.height - height - CAPSULE_EDGE_GAP
+  )
   const x =
     viewMode === 'orb' && windowPreferences.dockEdge === 'left' && !allowFloatingOrb
       ? workArea.x + CAPSULE_DOCK_EDGE_GAP

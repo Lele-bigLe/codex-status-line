@@ -22,6 +22,7 @@ export interface RateLimitWindowSnapshot {
 export interface UsageSnapshot {
   available: boolean
   isRefreshing: boolean
+  canRefresh: boolean
   generatedAt?: string
   rateLimits: {
     primary?: RateLimitWindowSnapshot
@@ -105,13 +106,13 @@ export const DEFAULT_REFRESH_INTERVAL_SECONDS = 30
 export const MIN_REFRESH_INTERVAL_SECONDS = 5
 export const MAX_REFRESH_INTERVAL_SECONDS = 600
 export const CAPSULE_WINDOW_SIZE = {
-  width: 204,
-  height: 40
+  width: 250,
+  height: 50
 } as const
 
 export const ORB_WINDOW_SIZE = {
-  width: 72,
-  height: 72
+  width: 70,
+  height: 165
 } as const
 
 export const CAPSULE_EDGE_GAP = 8
@@ -120,8 +121,8 @@ export const CAPSULE_DOCK_THRESHOLD = 18
 export const CAPSULE_UNDOCK_THRESHOLD = 42
 
 export const PANEL_WINDOW_SIZE = {
-  width: 416,
-  height: 360
+  width: 480,
+  height: 560
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -142,6 +143,7 @@ export function createEmptySnapshot(): UsageSnapshot {
   return {
     available: false,
     isRefreshing: false,
+    canRefresh: true,
     rateLimits: {},
     rateLimitSource: 'none',
     sourceHost: 'No data',
@@ -170,7 +172,9 @@ export function normalizeSettings(input: Partial<AppSettings> | undefined): AppS
 export function normalizeWindowPreferences(
   input: Partial<WindowPreferences> | undefined
 ): WindowPreferences {
-  const viewMode = isCapsuleViewMode(input?.viewMode) ? input.viewMode : DEFAULT_WINDOW_PREFERENCES.viewMode
+  const viewMode = isCapsuleViewMode(input?.viewMode)
+    ? input.viewMode
+    : DEFAULT_WINDOW_PREFERENCES.viewMode
   const dockEdge = viewMode === 'orb' && isDockEdge(input?.dockEdge) ? input.dockEdge : undefined
 
   return {
