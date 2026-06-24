@@ -14,7 +14,10 @@ asarUnpack:
 win:
   executableName: codex-status
   icon: build/icon-1.png
-  compression: maximum
+  compression: normal
+  electronLanguages:
+    - zh-CN
+    - en-US
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
