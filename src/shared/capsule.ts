@@ -111,7 +111,7 @@ export const CAPSULE_WINDOW_SIZE = {
 } as const
 
 export const ORB_WINDOW_SIZE = {
-  width: 70,
+  width: 60,
   height: 165
 } as const
 

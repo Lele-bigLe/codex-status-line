@@ -18,6 +18,7 @@ import {
 
 const DEFAULT_CUSTOM_REFRESH_INTERVAL_SECONDS = 40
 const CAPSULE_CLICK_DRAG_DISTANCE = 5
+const MANUAL_REFRESH_FEEDBACK_MS = 680
 
 interface CapsulePointerState {
   pointerId: number
@@ -117,8 +118,10 @@ function App(): React.JSX.Element {
     String(DEFAULT_SETTINGS.refreshIntervalSeconds)
   )
   const [capsulePointerActive, setCapsulePointerActive] = useState(false)
+  const [manualRefreshActive, setManualRefreshActive] = useState(false)
   const [ready, setReady] = useState(false)
   const capsulePointerRef = useRef<CapsulePointerState | null>(null)
+  const manualRefreshTimerRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     let active = true
@@ -170,6 +173,9 @@ function App(): React.JSX.Element {
 
     return () => {
       active = false
+      if (manualRefreshTimerRef.current !== undefined) {
+        window.clearTimeout(manualRefreshTimerRef.current)
+      }
       disposeSnapshot()
       disposePreferences()
       disposeCommand()
@@ -216,6 +222,7 @@ function App(): React.JSX.Element {
     `capsule--${capsuleViewMode}`,
     `capsule--${capsuleTone}`,
     snapshot.isRefreshing ? 'is-refreshing' : '',
+    manualRefreshActive ? 'is-manual-refreshing' : '',
     canRefresh ? '' : 'is-static',
     capsulePointerActive ? 'is-dragging' : ''
   ]
@@ -271,12 +278,26 @@ function App(): React.JSX.Element {
       return
     }
 
+    showManualRefreshFeedback()
+
     try {
       const nextSnapshot = await window.codexStatus.refreshStatus()
       setSnapshot(nextSnapshot)
     } catch (error) {
       recordSnapshotIssue(error)
     }
+  }
+
+  function showManualRefreshFeedback(): void {
+    setManualRefreshActive(true)
+    if (manualRefreshTimerRef.current !== undefined) {
+      window.clearTimeout(manualRefreshTimerRef.current)
+    }
+
+    manualRefreshTimerRef.current = window.setTimeout(() => {
+      setManualRefreshActive(false)
+      manualRefreshTimerRef.current = undefined
+    }, MANUAL_REFRESH_FEEDBACK_MS)
   }
 
   function handleCapsulePointerDown(event: React.PointerEvent<HTMLElement>): void {
