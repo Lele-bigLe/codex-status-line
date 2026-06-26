@@ -141,7 +141,7 @@ async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
 }
 
 async function readOfficialCodexCredentials(): Promise<CredentialLookup> {
-  const authPath = path.join(resolveCodexConfigDir(), 'auth.json')
+  const authPath = resolveCodexAuthPath()
 
   try {
     const content = await fs.readFile(authPath, 'utf8')
@@ -271,6 +271,10 @@ function createOfficialRateLimitWindow(
     },
     observedAt
   )
+}
+
+export function resolveCodexAuthPath(): string {
+  return path.join(resolveCodexConfigDir(), 'auth.json')
 }
 
 function resolveCodexConfigDir(): string {

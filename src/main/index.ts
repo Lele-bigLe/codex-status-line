@@ -10,6 +10,7 @@ import {
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
+import { watchFile, unwatchFile } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import appIcon from '../../build/icon-1.png?asset'
@@ -37,7 +38,7 @@ import {
   type UsageSnapshot,
   type WindowPreferences
 } from '../shared/capsule'
-import { collectUsageSnapshot } from './services/quota'
+import { collectUsageSnapshot, resolveCodexAuthPath } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
 
 const CHANNELS = {
@@ -58,6 +59,7 @@ let tray: Tray | null = null
 let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
 let refreshPromise: Promise<void> | undefined
+let watchedCodexAuthPath: string | undefined
 let isQuitting = false
 let currentPanelView: PanelView = 'details'
 let persistedState: PersistedState = {
@@ -255,6 +257,7 @@ if (hasSingleInstanceLock) {
     registerIpcHandlers()
     mainWindow = createCapsuleWindow()
     createTray()
+    watchCodexAuthFile()
     void refreshStatus()
 
     app.on('activate', function () {
@@ -276,6 +279,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true
   clearRefreshTimer()
+  clearCodexAuthWatcher()
 })
 
 function registerIpcHandlers(): void {
@@ -486,9 +490,30 @@ function openDetailsFromTray(): void {
 function quitApp(): void {
   isQuitting = true
   clearRefreshTimer()
+  clearCodexAuthWatcher()
   tray?.destroy()
   panelWindow?.destroy()
   app.quit()
+}
+
+function watchCodexAuthFile(): void {
+  watchedCodexAuthPath = resolveCodexAuthPath()
+  watchFile(watchedCodexAuthPath, { interval: 2000 }, (current, previous) => {
+    if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
+      return
+    }
+
+    void refreshStatus({ forceCredentialCheck: true })
+  })
+}
+
+function clearCodexAuthWatcher(): void {
+  if (!watchedCodexAuthPath) {
+    return
+  }
+
+  unwatchFile(watchedCodexAuthPath)
+  watchedCodexAuthPath = undefined
 }
 
 function syncRefreshTimer(): void {
@@ -509,12 +534,12 @@ function clearRefreshTimer(): void {
   }
 }
 
-async function refreshStatus(): Promise<void> {
+async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): Promise<void> {
   if (refreshPromise) {
     return refreshPromise
   }
 
-  if (!canRefreshStatus() && currentSnapshot.generatedAt) {
+  if (!options.forceCredentialCheck && !canRefreshStatus() && currentSnapshot.generatedAt) {
     syncRefreshTimer()
     return
   }
