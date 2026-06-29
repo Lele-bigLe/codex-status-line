@@ -25,7 +25,7 @@ nsis:
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true
-  runAfterFinish: true
+  runAfterFinish: false
 mac:
   target:
     - dmg
