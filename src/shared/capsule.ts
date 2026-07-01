@@ -115,7 +115,7 @@ export const ORB_WINDOW_SIZE = {
   height: 165
 } as const
 
-export const CAPSULE_EDGE_GAP = 8
+export const CAPSULE_EDGE_GAP = 0
 export const CAPSULE_DOCK_EDGE_GAP = 0
 export const CAPSULE_DOCK_THRESHOLD = 18
 export const CAPSULE_UNDOCK_THRESHOLD = 42

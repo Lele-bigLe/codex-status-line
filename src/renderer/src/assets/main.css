@@ -53,40 +53,53 @@ body {
   justify-content: center;
   padding: 0;
   overflow: hidden;
-  color: rgba(240, 245, 250, 0.92);
+  color: rgba(240, 245, 250, 0.94);
   border: 0;
   border-radius: 20px;
-  background: rgba(20, 28, 39, 0.58);
-  box-shadow: 0 4px 12px rgba(4, 10, 18, 0.14);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background:
+    linear-gradient(168deg, rgba(38, 48, 62, 0.62) 0%, rgba(16, 22, 32, 0.64) 100%);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.08),
+    0 8px 20px rgba(4, 10, 18, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: saturate(1.4) blur(2px);
+  -webkit-backdrop-filter: saturate(1.4) blur(2px);
   cursor: grab;
   outline: none;
   touch-action: none;
   transition:
-    box-shadow 180ms ease,
+    box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1),
     transform 180ms ease;
   --capsule-accent: rgba(88, 215, 131, 0.85);
 }
 
 .capsule:hover {
-  box-shadow: 0 5px 14px rgba(4, 10, 18, 0.16);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(4, 10, 18, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .capsule:focus-visible {
   box-shadow:
-    0 5px 14px rgba(4, 10, 18, 0.18),
-    0 0 0 2px color-mix(in srgb, var(--capsule-accent) 24%, transparent);
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(4, 10, 18, 0.22),
+    0 0 0 2px color-mix(in srgb, var(--capsule-accent) 18%, transparent);
 }
 
 .capsule:active,
 .capsule.is-dragging {
   cursor: grabbing;
-  transform: scale(0.985);
+  transform: scale(0.982);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    0 4px 12px rgba(4, 10, 18, 0.14);
 }
 
 .capsule.is-refreshing {
-  box-shadow: 0 5px 14px rgba(4, 10, 18, 0.16);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 10px 28px rgba(4, 10, 18, 0.2);
 }
 
 .capsule.is-manual-refreshing {
@@ -103,11 +116,11 @@ body {
   background:
     linear-gradient(
       105deg,
-      transparent 30%,
-      color-mix(in srgb, var(--capsule-accent) 36%, transparent) 46%,
-      rgba(255, 255, 255, 0.28) 50%,
-      color-mix(in srgb, var(--capsule-accent) 28%, transparent) 56%,
-      transparent 70%
+      transparent 28%,
+      color-mix(in srgb, var(--capsule-accent) 40%, transparent) 44%,
+      rgba(255, 255, 255, 0.32) 50%,
+      color-mix(in srgb, var(--capsule-accent) 32%, transparent) 56%,
+      transparent 72%
     );
   transform: translateX(-72%) skewX(-14deg);
   animation: capsule-refresh-sheen 680ms cubic-bezier(0.18, 0.86, 0.32, 1);
@@ -152,7 +165,8 @@ body {
 .capsule--orb {
   grid-template-columns: 1fr;
   border-radius: 17px;
-  background: rgba(18, 26, 36, 0.6);
+  background:
+    linear-gradient(180deg, rgba(28, 38, 52, 0.62) 0%, rgba(14, 20, 30, 0.66) 100%);
 }
 
 .capsule__summary,
@@ -184,12 +198,13 @@ body {
 
 .capsule__metrics::after {
   width: 1px;
-  height: 24px;
+  height: 26px;
   position: absolute;
   top: 50%;
   left: 42.8%;
   content: '';
-  background: rgba(215, 226, 238, 0.1);
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(215, 226, 238, 0.12) 30%, rgba(215, 226, 238, 0.12) 70%, transparent 100%);
   transform: translate(-50%, -50%);
 }
 
@@ -200,8 +215,8 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
-  padding: 7px 18px 9px;
+  gap: 4px;
+  padding: 8px 18px 10px;
   overflow: hidden;
   --metric-accent: rgba(151, 163, 176, 0.74);
 }
@@ -230,18 +245,18 @@ body {
 .metric-segment__name {
   flex: 0 0 auto;
   font-size: 17px;
-  font-weight: 720;
+  font-weight: 740;
   line-height: 1;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .metric-segment__reset {
   min-width: 0;
   overflow: hidden;
-  color: rgba(192, 204, 216, 0.62);
-  font-size: 13px;
-  font-weight: 560;
+  color: rgba(192, 204, 216, 0.54);
+  font-size: 12.5px;
+  font-weight: 520;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
@@ -254,9 +269,10 @@ body {
   min-width: max-content;
   color: var(--metric-accent);
   font-size: 15px;
-  font-weight: 690;
+  font-weight: 720;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--metric-accent) 30%, transparent);
 }
 
 .metric-segment--positive {
@@ -277,16 +293,16 @@ body {
 
 .metric-segment__progress,
 .edge-metric__progress {
-  height: 2px;
+  height: 3px;
   position: absolute;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(230, 238, 246, 0.08);
+  background: rgba(230, 238, 246, 0.06);
 }
 
 .metric-segment__progress {
   right: 18px;
-  bottom: 6px;
+  bottom: 7px;
   left: 18px;
 }
 
@@ -304,7 +320,10 @@ body {
   height: 100%;
   display: block;
   border-radius: inherit;
-  background: var(--metric-accent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--metric-accent) 72%, transparent) 0%, var(--metric-accent) 100%);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--metric-accent) 40%, transparent);
+  transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .capsule__edge-metrics {
@@ -336,17 +355,18 @@ body {
   bottom: 0;
   left: 12px;
   content: '';
-  background: rgba(215, 226, 238, 0.1);
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(215, 226, 238, 0.1) 20%, rgba(215, 226, 238, 0.1) 80%, transparent 100%);
 }
 
 .edge-metric__label {
   max-width: 100%;
   overflow: hidden;
-  color: rgba(239, 245, 250, 0.9);
+  color: rgba(239, 245, 250, 0.92);
   font-size: 18px;
-  font-weight: 720;
+  font-weight: 740;
   line-height: 1;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -370,11 +390,12 @@ body {
   max-width: 100%;
   color: var(--metric-accent);
   font-size: 14px;
-  font-weight: 680;
+  font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-shadow: 0 0 10px color-mix(in srgb, var(--metric-accent) 28%, transparent);
 }
 
 .edge-metric__progress {
@@ -901,15 +922,21 @@ body {
 
 @keyframes capsule-manual-refresh {
   0% {
-    box-shadow: 0 5px 14px rgba(4, 10, 18, 0.16);
+    box-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.06),
+      0 8px 20px rgba(4, 10, 18, 0.18);
   }
   35% {
     box-shadow:
-      0 8px 24px rgba(4, 10, 18, 0.22),
-      0 0 0 1px color-mix(in srgb, var(--capsule-accent) 42%, transparent);
+      0 4px 12px rgba(0, 0, 0, 0.08),
+      0 12px 32px rgba(4, 10, 18, 0.24),
+      0 0 0 1.5px color-mix(in srgb, var(--capsule-accent) 48%, transparent),
+      0 0 20px color-mix(in srgb, var(--capsule-accent) 16%, transparent);
   }
   100% {
-    box-shadow: 0 5px 14px rgba(4, 10, 18, 0.16);
+    box-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.08),
+      0 8px 20px rgba(4, 10, 18, 0.18);
   }
 }
 
