@@ -48,6 +48,9 @@ const COPY = {
     percentageMode: '百分比口径',
     language: '语种',
     launchAtLogin: '开机自启动',
+    groupRefresh: '刷新',
+    groupDisplay: '显示',
+    groupGeneral: '通用',
     auto: '自动',
     manual: '手动',
     enabled: '开启',
@@ -85,6 +88,9 @@ const COPY = {
     percentageMode: 'Metric mode',
     language: 'Language',
     launchAtLogin: 'Open at login',
+    groupRefresh: 'Refresh',
+    groupDisplay: 'Display',
+    groupGeneral: 'General',
     auto: 'Auto',
     manual: 'Manual',
     enabled: 'Enabled',
@@ -239,18 +245,12 @@ function App(): React.JSX.Element {
     {
       icon: <ClockIcon />,
       label: `${snapshot.rateLimits.primary?.label ?? '5h'} ${copy.reset}`,
-      value: formatAbsoluteDate(snapshot.rateLimits.primary?.resetsAt, settings.locale),
-      hint: formatRelativeDuration(
-        snapshot.rateLimits.primary?.resetsInSeconds,
-        settings.locale,
-        true
-      )
+      value: formatAbsoluteDate(snapshot.rateLimits.primary?.resetsAt, settings.locale)
     },
     {
       icon: <CalendarIcon />,
       label: `${snapshot.rateLimits.secondary?.label ?? '7d'} ${copy.reset}`,
-      value: formatAbsoluteDate(snapshot.rateLimits.secondary?.resetsAt, settings.locale),
-      hint: formatRelativeDuration(snapshot.rateLimits.secondary?.resetsInSeconds, settings.locale)
+      value: formatAbsoluteDate(snapshot.rateLimits.secondary?.resetsAt, settings.locale)
     },
     {
       icon: <HistoryIcon />,
@@ -539,6 +539,23 @@ function App(): React.JSX.Element {
                 </div>
               </div>
 
+              <div className="quota-grid">
+                <QuotaCard
+                  fallbackLabel="5h"
+                  locale={settings.locale}
+                  modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
+                  percentageMode={settings.percentageMode}
+                  windowState={snapshot.rateLimits.primary}
+                />
+                <QuotaCard
+                  fallbackLabel="7d"
+                  locale={settings.locale}
+                  modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
+                  percentageMode={settings.percentageMode}
+                  windowState={snapshot.rateLimits.secondary}
+                />
+              </div>
+
               <div className="panel__rows">
                 {detailRows.map((row) => (
                   <DetailRow
@@ -605,6 +622,7 @@ function App(): React.JSX.Element {
 
               <div className="settings-list">
                 <div className="settings-section">
+                  <p className="settings-section__title">{copy.groupRefresh}</p>
                   <SettingField label={copy.refreshMode}>
                     <SegmentedControl
                       onChange={(value) => {
@@ -634,34 +652,37 @@ function App(): React.JSX.Element {
                         ]}
                         value={intervalControlValue}
                       />
-                      <label
-                        className={`inline-input ${canEditCustomRefresh ? 'is-active' : 'is-disabled'}`}
-                      >
-                        <span>{copy.customInterval}</span>
-                        <input
-                          disabled={!canEditCustomRefresh}
-                          max={MAX_REFRESH_INTERVAL_SECONDS}
-                          min={MIN_REFRESH_INTERVAL_SECONDS}
-                          onBlur={commitCustomRefreshInterval}
-                          onChange={(event) => {
-                            setCustomRefreshInput(event.target.value)
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.currentTarget.blur()
-                            }
-                          }}
-                          step={1}
-                          type="number"
-                          value={customRefreshInput}
-                        />
-                        <em>s</em>
-                      </label>
+                      {intervalControlValue === 'custom' ? (
+                        <label
+                          className={`inline-input ${canEditCustomRefresh ? 'is-active' : 'is-disabled'}`}
+                        >
+                          <span>{copy.customInterval}</span>
+                          <input
+                            disabled={!canEditCustomRefresh}
+                            max={MAX_REFRESH_INTERVAL_SECONDS}
+                            min={MIN_REFRESH_INTERVAL_SECONDS}
+                            onBlur={commitCustomRefreshInterval}
+                            onChange={(event) => {
+                              setCustomRefreshInput(event.target.value)
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.currentTarget.blur()
+                              }
+                            }}
+                            step={1}
+                            type="number"
+                            value={customRefreshInput}
+                          />
+                          <em>s</em>
+                        </label>
+                      ) : null}
                     </div>
                   </SettingField>
                 </div>
 
                 <div className="settings-section">
+                  <p className="settings-section__title">{copy.groupDisplay}</p>
                   <SettingField label={copy.percentageMode}>
                     <SegmentedControl
                       onChange={(value) => {
@@ -676,9 +697,7 @@ function App(): React.JSX.Element {
                       value={settings.percentageMode}
                     />
                   </SettingField>
-                </div>
 
-                <div className="settings-section">
                   <SettingField label={copy.language}>
                     <SegmentedControl
                       onChange={(value) => {
@@ -696,19 +715,18 @@ function App(): React.JSX.Element {
                 </div>
 
                 <div className="settings-section">
-                  <SettingField label={copy.launchAtLogin}>
-                    <div className="setting-row">
-                      <span>{copy.launchAtLogin}</span>
-                      <ToggleSwitch
-                        checked={settings.launchAtLogin}
-                        offLabel={copy.disabled}
-                        onChange={(checked) => {
-                          void handleSettingsPatch({ launchAtLogin: checked })
-                        }}
-                        onLabel={copy.enabled}
-                      />
-                    </div>
-                  </SettingField>
+                  <p className="settings-section__title">{copy.groupGeneral}</p>
+                  <div className="setting-row">
+                    <span>{copy.launchAtLogin}</span>
+                    <ToggleSwitch
+                      checked={settings.launchAtLogin}
+                      offLabel={copy.disabled}
+                      onChange={(checked) => {
+                        void handleSettingsPatch({ launchAtLogin: checked })
+                      }}
+                      onLabel={copy.enabled}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -796,6 +814,52 @@ function EdgeMetricSegment({
       </span>
     </div>
   )
+}
+
+function QuotaCard({
+  fallbackLabel,
+  locale,
+  modeLabel,
+  percentageMode,
+  windowState
+}: {
+  fallbackLabel: string
+  locale: LocaleCode
+  modeLabel: string
+  percentageMode: PercentageMode
+  windowState?: RateLimitWindowSnapshot
+}): React.JSX.Element {
+  const displayPercent =
+    percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
+  const tone = resolveMetricTone(displayPercent, percentageMode)
+  const progressStyle = createMetricProgressStyle(displayPercent)
+
+  return (
+    <div className={`quota-card quota-card--${tone}`} style={progressStyle}>
+      <div className="quota-card__head">
+        <span className="quota-card__label">{windowState?.label ?? fallbackLabel}</span>
+        <span className="quota-card__mode">{modeLabel}</span>
+      </div>
+      <div className="quota-card__value">
+        {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
+      </div>
+      <span className="quota-card__progress" aria-hidden="true">
+        <span />
+      </span>
+      <p className="quota-card__reset">
+        {formatQuotaResetHint(windowState?.resetsInSeconds, locale)}
+      </p>
+    </div>
+  )
+}
+
+function formatQuotaResetHint(seconds: number | undefined, locale: LocaleCode): string {
+  const duration = formatRelativeDuration(seconds, locale, locale === 'zh-CN')
+  if (!duration) {
+    return '--'
+  }
+
+  return locale === 'zh-CN' ? `${duration}重置` : `resets in ${duration}`
 }
 
 function DetailRow({

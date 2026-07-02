@@ -122,7 +122,7 @@ export const CAPSULE_UNDOCK_THRESHOLD = 42
 
 export const PANEL_WINDOW_SIZE = {
   width: 480,
-  height: 560
+  height: 600
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
