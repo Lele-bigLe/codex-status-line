@@ -2,15 +2,17 @@ import {
   app,
   shell,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
+  Notification,
   Tray,
   nativeImage,
   screen,
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { watchFile, unwatchFile } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'path'
@@ -57,11 +59,14 @@ const CHANNELS = {
 
 // --ignore-user-config 隔离 ~/.codex/config.toml,模型固定为 gpt-5.4-mini,不随用户配置变化
 const CODEX_DISPATCH_COMMAND =
-  'codex exec --skip-git-repo-check --ephemeral --ignore-user-config -m gpt-5.4-mini hi'
+  'codex exec --skip-git-repo-check --ephemeral --ignore-user-config --color never -m gpt-5.4-mini hi'
+const CODEX_DISPATCH_TIMEOUT_MS = 180_000
+const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
 
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let dispatchChild: ChildProcess | undefined
 let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
 let refreshPromise: Promise<void> | undefined
@@ -367,6 +372,7 @@ function refreshTrayMenu(): void {
       ? [
           {
             label: labels.dispatch,
+            enabled: !dispatchChild,
             click: () => {
               launchCodexDispatch()
             }
@@ -513,23 +519,80 @@ function openDetailsFromTray(): void {
 }
 
 function launchCodexDispatch(): void {
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' || dispatchChild) {
     return
   }
 
-  const title = persistedState.settings.locale === 'en-US' ? 'Codex Dispatch' : 'Codex 投送'
-  // 成功时 cmd /c 随命令结束自动关闭终端窗口;失败时 pause 保留窗口以便查看错误
-  const child = spawn(
-    'cmd.exe',
-    ['/c', `start "${title}" cmd /c "${CODEX_DISPATCH_COMMAND} || pause"`],
-    {
-      cwd: homedir(),
-      detached: true,
-      stdio: 'ignore',
-      windowsVerbatimArguments: true
+  const isEnglish = persistedState.settings.locale === 'en-US'
+  let output = ''
+  let timedOut = false
+
+  // 静默执行不弹终端窗口;codex 的 npm shim 是 .cmd,必须经 cmd.exe 启动
+  const child = spawn('cmd.exe', ['/c', CODEX_DISPATCH_COMMAND], {
+    cwd: homedir(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    windowsVerbatimArguments: true
+  })
+  dispatchChild = child
+  refreshTrayMenu()
+
+  const appendOutput = (chunk: Buffer): void => {
+    output = `${output}${chunk.toString()}`.slice(-CODEX_DISPATCH_OUTPUT_LIMIT)
+  }
+  child.stdout?.on('data', appendOutput)
+  child.stderr?.on('data', appendOutput)
+
+  // codex 卡死时终止整个进程树,避免静默进程无限挂起、菜单一直禁用
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    if (child.pid !== undefined) {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
     }
-  )
-  child.unref()
+  }, CODEX_DISPATCH_TIMEOUT_MS)
+
+  const settle = (succeeded: boolean, detail: string): void => {
+    if (dispatchChild !== child) {
+      return
+    }
+
+    clearTimeout(timeoutTimer)
+    dispatchChild = undefined
+    refreshTrayMenu()
+
+    if (succeeded) {
+      new Notification({
+        title: isEnglish ? 'Codex Dispatch' : 'Codex 投送',
+        body: isEnglish ? 'Dispatch completed.' : '投送完成',
+        silent: true
+      }).show()
+      return
+    }
+
+    dialog.showErrorBox(
+      isEnglish ? 'Codex dispatch failed' : 'Codex 投送失败',
+      detail.trim() || (isEnglish ? 'Unknown error.' : '未知错误')
+    )
+  }
+
+  child.on('error', (error) => {
+    settle(false, error.message)
+  })
+
+  child.on('exit', (code) => {
+    if (code === 0) {
+      settle(true, '')
+      return
+    }
+
+    const timeoutSeconds = Math.round(CODEX_DISPATCH_TIMEOUT_MS / 1000)
+    const reason = timedOut
+      ? isEnglish
+        ? `Timed out after ${timeoutSeconds}s and was terminated.`
+        : `等待超过 ${timeoutSeconds} 秒,已强制终止。`
+      : ''
+    settle(false, [reason, output].filter(Boolean).join('\n'))
+  })
 }
 
 function quitApp(): void {
