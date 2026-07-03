@@ -10,7 +10,9 @@ import {
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
+import { spawn } from 'node:child_process'
 import { watchFile, unwatchFile } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import appIcon from '../../build/icon-1.png?asset'
@@ -52,6 +54,10 @@ const CHANNELS = {
   preferencesUpdated: 'codex-status:preferences-updated',
   command: 'codex-status:command'
 } as const
+
+// --ignore-user-config 隔离 ~/.codex/config.toml,模型固定为 gpt-5.4-mini,不随用户配置变化
+const CODEX_DISPATCH_COMMAND =
+  'codex exec --skip-git-repo-check --ephemeral --ignore-user-config -m gpt-5.4-mini hi'
 
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
@@ -356,6 +362,17 @@ function refreshTrayMenu(): void {
   }
 
   const labels = getTrayLabels()
+  const dispatchMenuItems: MenuItemConstructorOptions[] =
+    process.platform === 'win32'
+      ? [
+          {
+            label: labels.dispatch,
+            click: () => {
+              launchCodexDispatch()
+            }
+          }
+        ]
+      : []
   const menuTemplate: MenuItemConstructorOptions[] = [
     {
       label: labels.refresh,
@@ -364,6 +381,7 @@ function refreshTrayMenu(): void {
         void refreshStatus()
       }
     },
+    ...dispatchMenuItems,
     {
       label: labels.toggle,
       click: () => {
@@ -395,10 +413,14 @@ function refreshTrayMenu(): void {
   tray.setToolTip(buildTrayTooltip())
 }
 
-function getTrayLabels(): Record<'refresh' | 'toggle' | 'details' | 'settings' | 'quit', string> {
+function getTrayLabels(): Record<
+  'refresh' | 'dispatch' | 'toggle' | 'details' | 'settings' | 'quit',
+  string
+> {
   if (persistedState.settings.locale === 'en-US') {
     return {
       refresh: 'Refresh',
+      dispatch: 'Dispatch',
       toggle: 'Show/Hide',
       details: 'Details',
       settings: 'Settings',
@@ -408,6 +430,7 @@ function getTrayLabels(): Record<'refresh' | 'toggle' | 'details' | 'settings' |
 
   return {
     refresh: '刷新',
+    dispatch: '投送',
     toggle: '显示/隐藏',
     details: '详情',
     settings: '设置',
@@ -487,6 +510,26 @@ function openSettingsFromTray(): void {
 
 function openDetailsFromTray(): void {
   openPanelWindow('details')
+}
+
+function launchCodexDispatch(): void {
+  if (process.platform !== 'win32') {
+    return
+  }
+
+  const title = persistedState.settings.locale === 'en-US' ? 'Codex Dispatch' : 'Codex 投送'
+  // 成功时 cmd /c 随命令结束自动关闭终端窗口;失败时 pause 保留窗口以便查看错误
+  const child = spawn(
+    'cmd.exe',
+    ['/c', `start "${title}" cmd /c "${CODEX_DISPATCH_COMMAND} || pause"`],
+    {
+      cwd: homedir(),
+      detached: true,
+      stdio: 'ignore',
+      windowsVerbatimArguments: true
+    }
+  )
+  child.unref()
 }
 
 function quitApp(): void {
