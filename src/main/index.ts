@@ -42,7 +42,11 @@ import {
   type UsageSnapshot,
   type WindowPreferences
 } from '../shared/capsule'
-import { collectUsageSnapshot, resolveCodexAuthPath } from './services/quota'
+import {
+  collectUsageSnapshot,
+  fetchOfficialPrimaryResetAt,
+  resolveCodexAuthPath
+} from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
 
 const CHANNELS = {
@@ -62,6 +66,10 @@ const CODEX_DISPATCH_COMMAND =
   'codex exec --skip-git-repo-check --ephemeral --ignore-user-config --color never -m gpt-5.4-mini hi'
 const CODEX_DISPATCH_TIMEOUT_MS = 180_000
 const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
+const CODEX_DISPATCH_VERIFY_DELAY_MS = 8000
+// 激活态下官方接口的 reset_at 实测存在 ±1s 抖动;漂移态两次查询差值约等于查询间隔(8s+),
+// 容差取 3s 可同时避开抖动误判和漂移漏判
+const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
 
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
@@ -551,21 +559,19 @@ function launchCodexDispatch(): void {
     }
   }, CODEX_DISPATCH_TIMEOUT_MS)
 
-  const settle = (succeeded: boolean, detail: string): void => {
+  const release = (): boolean => {
     if (dispatchChild !== child) {
-      return
+      return false
     }
 
     clearTimeout(timeoutTimer)
     dispatchChild = undefined
     refreshTrayMenu()
+    return true
+  }
 
-    if (succeeded) {
-      new Notification({
-        title: isEnglish ? 'Codex Dispatch' : 'Codex 投送',
-        body: isEnglish ? 'Dispatch completed.' : '投送完成',
-        silent: true
-      }).show()
+  const settleFailure = (detail: string): void => {
+    if (!release()) {
       return
     }
 
@@ -575,13 +581,62 @@ function launchCodexDispatch(): void {
     )
   }
 
+  // exit 0 只说明进程正常退出;是否真正启动计时窗口需向官方额度接口二次确认。
+  // 验证期间保持 dispatchChild 占用,避免并发投送干扰 reset_at 对比
+  const settleSuccess = async (): Promise<void> => {
+    const verdict = await verifyDispatchActivation()
+    if (!release()) {
+      return
+    }
+
+    void refreshStatus()
+
+    if (verdict === 'inactive') {
+      dialog.showErrorBox(
+        isEnglish ? 'Codex dispatch failed' : 'Codex 投送失败',
+        isEnglish
+          ? 'Command finished, but the rate limit window was not activated. This dispatch did not take effect.'
+          : '命令已执行完成,但 Codex 计时窗口未被激活,本次投送未生效。'
+      )
+      return
+    }
+
+    new Notification({
+      title: isEnglish ? 'Codex Dispatch' : 'Codex 投送',
+      body:
+        verdict === 'activated'
+          ? isEnglish
+            ? 'Dispatch completed. Rate limit window is counting down.'
+            : '投送完成,计时窗口已激活'
+          : isEnglish
+            ? 'Dispatch completed, but window activation could not be verified.'
+            : '投送完成,但官方接口不可用,未能确认计时窗口',
+      silent: true
+    }).show()
+  }
+
   child.on('error', (error) => {
-    settle(false, error.message)
+    settleFailure(error.message)
   })
 
   child.on('exit', (code) => {
     if (code === 0) {
-      settle(true, '')
+      // codex exec 正常完成一次对话必然输出 tokens used;缺失说明没有真实消费
+      if (/tokens used/i.test(output)) {
+        void settleSuccess()
+        return
+      }
+
+      settleFailure(
+        [
+          isEnglish
+            ? 'Process exited normally but reported no token usage; the request likely never reached Codex.'
+            : '进程正常退出,但输出中没有 tokens used,请求可能没有真正发送给 Codex。',
+          output
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
       return
     }
 
@@ -591,8 +646,40 @@ function launchCodexDispatch(): void {
         ? `Timed out after ${timeoutSeconds}s and was terminated.`
         : `等待超过 ${timeoutSeconds} 秒,已强制终止。`
       : ''
-    settle(false, [reason, output].filter(Boolean).join('\n'))
+    settleFailure([reason, output].filter(Boolean).join('\n'))
   })
+}
+
+// 5h 窗口未激活时 reset_at 恒为"当前时间+窗口全长",随查询时间漂移;激活后固定(仅 ±1s 抖动)。
+// 两次间隔查询差值在容差内即已激活;首轮超差可能是激活恰好落在两次查询之间,再补一轮对比
+async function verifyDispatchActivation(): Promise<'activated' | 'inactive' | 'unknown'> {
+  const isStable = (left: number, right: number): boolean =>
+    Math.abs(left - right) <= CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
+
+  const first = await fetchOfficialPrimaryResetAt()
+  if (first === undefined) {
+    return 'unknown'
+  }
+
+  await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
+  const second = await fetchOfficialPrimaryResetAt()
+  if (second === undefined) {
+    return 'unknown'
+  }
+  if (isStable(first, second)) {
+    return 'activated'
+  }
+
+  await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
+  const third = await fetchOfficialPrimaryResetAt()
+  if (third === undefined) {
+    return 'unknown'
+  }
+  return isStable(second, third) ? 'activated' : 'inactive'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function quitApp(): void {

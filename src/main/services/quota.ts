@@ -118,15 +118,7 @@ async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
     }
   }
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${credentialLookup.credentials.accessToken}`,
-    'User-Agent': 'codex-cli',
-    Accept: 'application/json'
-  }
-
-  if (credentialLookup.credentials.accountId) {
-    headers['ChatGPT-Account-Id'] = credentialLookup.credentials.accountId
-  }
+  const headers = buildOfficialHeaders(credentialLookup.credentials)
 
   try {
     const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
@@ -137,6 +129,46 @@ async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
       : { canRefresh: true, issue: '官方接口未返回额度窗口' }
   } catch (error) {
     return { canRefresh: true, issue: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function buildOfficialHeaders(credentials: {
+  accessToken: string
+  accountId?: string
+}): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${credentials.accessToken}`,
+    'User-Agent': 'codex-cli',
+    Accept: 'application/json'
+  }
+
+  if (credentials.accountId) {
+    headers['ChatGPT-Account-Id'] = credentials.accountId
+  }
+
+  return headers
+}
+
+// 5h 窗口未激活时,官方接口的 reset_at 恒等于"当前时间 + 窗口全长"并随查询时间漂移;
+// 激活后 reset_at 固定不变。调用方据此用两次间隔查询判断投送是否真正启动了计时窗口。
+export async function fetchOfficialPrimaryResetAt(): Promise<number | undefined> {
+  const credentialLookup = await readOfficialCodexCredentials()
+  if (!credentialLookup.credentials) {
+    return undefined
+  }
+
+  try {
+    const response = await requestJson(
+      OFFICIAL_CODEX_USAGE_URL,
+      buildOfficialHeaders(credentialLookup.credentials),
+      OFFICIAL_QUOTA_TIMEOUT_MS
+    )
+    const body = getRecord(response)
+    const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
+    const primary = getRecord(rateLimit?.primary_window ?? rateLimit?.primaryWindow)
+    return getNonNegativeNumber(primary?.reset_at ?? primary?.resetAt)
+  } catch {
+    return undefined
   }
 }
 
