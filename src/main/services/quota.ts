@@ -41,6 +41,7 @@ interface CredentialLookup {
 const SESSION_SUBDIR = 'sessions'
 const OFFICIAL_CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const OFFICIAL_QUOTA_TIMEOUT_MS = 8000
+const OFFICIAL_QUOTA_RECHECK_DELAY_MS = 1000
 const FILE_SCAN_LIMIT = 80
 const FIVE_HOUR_MINUTES = 300
 const WEEKLY_MINUTES = 10080
@@ -75,7 +76,7 @@ export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
   let rateLimitSource: RateLimitSource = hasRateLimits(localRateLimits) ? 'local' : 'none'
   let officialIssue: string | undefined
 
-  const officialLookup = await getOfficialRateLimits()
+  const officialLookup = await getOfficialRateLimits(localRateLimits)
   if (officialLookup.rateLimits && hasRateLimits(officialLookup.rateLimits)) {
     rateLimits = officialLookup.rateLimits
     rateLimitSource = 'official'
@@ -109,7 +110,9 @@ export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
   }
 }
 
-async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
+async function getOfficialRateLimits(
+  localRateLimits: UsageSnapshot['rateLimits']
+): Promise<OfficialRateLimitLookup> {
   const credentialLookup = await readOfficialCodexCredentials()
   if (!credentialLookup.credentials) {
     return {
@@ -121,15 +124,48 @@ async function getOfficialRateLimits(): Promise<OfficialRateLimitLookup> {
   const headers = buildOfficialHeaders(credentialLookup.credentials)
 
   try {
-    const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
-    const observedAt = new Date()
-    const rateLimits = parseOfficialRateLimits(response, observedAt)
+    let rateLimits = await requestOfficialRateLimits(headers)
+    if (shouldRecheckOfficialRateLimits(rateLimits, localRateLimits)) {
+      await new Promise((resolve) => setTimeout(resolve, OFFICIAL_QUOTA_RECHECK_DELAY_MS))
+      rateLimits = await requestOfficialRateLimits(headers)
+    }
+
     return hasRateLimits(rateLimits)
       ? { rateLimits, canRefresh: true }
       : { canRefresh: true, issue: '官方接口未返回额度窗口' }
   } catch (error) {
     return { canRefresh: true, issue: error instanceof Error ? error.message : String(error) }
   }
+}
+
+async function requestOfficialRateLimits(
+  headers: Record<string, string>
+): Promise<UsageSnapshot['rateLimits']> {
+  const response = await requestJson(
+    OFFICIAL_CODEX_USAGE_URL,
+    headers,
+    OFFICIAL_QUOTA_TIMEOUT_MS
+  )
+  return parseOfficialRateLimits(response, new Date())
+}
+
+export function shouldRecheckOfficialRateLimits(
+  officialRateLimits: UsageSnapshot['rateLimits'],
+  localRateLimits: UsageSnapshot['rateLimits']
+): boolean {
+  const officialPrimary = officialRateLimits.primary?.usedPercent
+  const officialSecondary = officialRateLimits.secondary?.usedPercent
+  const localPrimary = localRateLimits.primary?.usedPercent
+  const localSecondary = localRateLimits.secondary?.usedPercent
+
+  return (
+    officialPrimary !== undefined &&
+    officialSecondary !== undefined &&
+    localPrimary !== undefined &&
+    localSecondary !== undefined &&
+    officialPrimary < localPrimary &&
+    officialSecondary < localSecondary
+  )
 }
 
 function buildOfficialHeaders(credentials: {
