@@ -134,4 +134,4 @@ jobs:
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          gh release edit "${TAG_NAME}" --draft=false --prerelease="${PRERELEASE}"
+          gh release edit "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --prerelease="${PRERELEASE}"
