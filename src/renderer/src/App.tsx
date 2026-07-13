@@ -240,7 +240,7 @@ function App(): React.JSX.Element {
     .filter(Boolean)
     .join(' ')
 
-  const detailRows = [
+  const detailRows: Array<React.ComponentProps<typeof DetailRow>> = [
     {
       icon: <ServerIcon />,
       label: copy.source,
