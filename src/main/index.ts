@@ -17,6 +17,7 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import electronUpdater, { type AppUpdater } from 'electron-updater'
 import appIcon from '../../build/icon-1.png?asset'
 import trayIcon from '../../build/icon-2.png?asset'
 import {
@@ -44,10 +45,17 @@ import {
 } from '../shared/capsule'
 import {
   collectUsageSnapshot,
-  fetchOfficialPrimaryResetAt,
+  fetchOfficialDispatchResetAt,
   resolveCodexAuthPath
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
+
+function getAutoUpdater(): AppUpdater {
+  const { autoUpdater } = electronUpdater
+  return autoUpdater
+}
+
+const autoUpdater = getAutoUpdater()
 
 const CHANNELS = {
   bootstrap: 'codex-status:bootstrap',
@@ -67,6 +75,8 @@ const CODEX_DISPATCH_COMMAND =
 const CODEX_DISPATCH_TIMEOUT_MS = 180_000
 const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
 const CODEX_DISPATCH_VERIFY_DELAY_MS = 8000
+const SINGLE_CAPSULE_WINDOW_WIDTH = 160
+const SINGLE_ORB_WINDOW_HEIGHT = 96
 // 激活态下官方接口的 reset_at 实测存在 ±1s 抖动;漂移态两次查询差值约等于查询间隔(8s+),
 // 容差取 3s 可同时避开抖动误判和漂移漏判
 const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
@@ -79,6 +89,7 @@ let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
 let refreshPromise: Promise<void> | undefined
 let watchedCodexAuthPath: string | undefined
+let isCheckingForUpdates = false
 let isQuitting = false
 let currentPanelView: PanelView = 'details'
 let persistedState: PersistedState = {
@@ -414,6 +425,13 @@ function refreshTrayMenu(): void {
         openSettingsFromTray()
       }
     },
+    {
+      label: labels.checkForUpdates,
+      enabled: !isCheckingForUpdates,
+      click: () => {
+        void checkForUpdates()
+      }
+    },
     { type: 'separator' },
     {
       label: labels.quit,
@@ -428,7 +446,13 @@ function refreshTrayMenu(): void {
 }
 
 function getTrayLabels(): Record<
-  'refresh' | 'dispatch' | 'toggle' | 'details' | 'settings' | 'quit',
+  | 'refresh'
+  | 'dispatch'
+  | 'toggle'
+  | 'details'
+  | 'settings'
+  | 'checkForUpdates'
+  | 'quit',
   string
 > {
   if (persistedState.settings.locale === 'en-US') {
@@ -438,6 +462,7 @@ function getTrayLabels(): Record<
       toggle: 'Show/Hide',
       details: 'Details',
       settings: 'Settings',
+      checkForUpdates: 'Check for Updates',
       quit: 'Quit'
     }
   }
@@ -448,6 +473,7 @@ function getTrayLabels(): Record<
     toggle: '显示/隐藏',
     details: '详情',
     settings: '设置',
+    checkForUpdates: '检查更新',
     quit: '退出'
   }
 }
@@ -608,9 +634,13 @@ function launchCodexDispatch(): void {
           ? isEnglish
             ? 'Dispatch completed. Rate limit window is counting down.'
             : '投送完成,计时窗口已激活'
-          : isEnglish
-            ? 'Dispatch completed, but window activation could not be verified.'
-            : '投送完成,但官方接口不可用,未能确认计时窗口',
+          : verdict === 'unlimited'
+            ? isEnglish
+              ? 'Dispatch completed. The official API currently reports no rate limit window.'
+              : '投送完成,官方当前未返回计时限额'
+            : isEnglish
+              ? 'Dispatch completed, but window activation could not be verified.'
+              : '投送完成,但官方接口不可用,未能确认计时窗口',
       silent: true
     }).show()
   }
@@ -650,19 +680,27 @@ function launchCodexDispatch(): void {
   })
 }
 
-// 5h 窗口未激活时 reset_at 恒为"当前时间+窗口全长",随查询时间漂移;激活后固定(仅 ±1s 抖动)。
+// 官方当前窗口未激活时 reset_at 恒为"当前时间+窗口全长",随查询时间漂移;激活后固定(仅 ±1s 抖动)。
 // 两次间隔查询差值在容差内即已激活;首轮超差可能是激活恰好落在两次查询之间,再补一轮对比
-async function verifyDispatchActivation(): Promise<'activated' | 'inactive' | 'unknown'> {
+async function verifyDispatchActivation(): Promise<
+  'activated' | 'inactive' | 'unlimited' | 'unknown'
+> {
   const isStable = (left: number, right: number): boolean =>
     Math.abs(left - right) <= CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
 
-  const first = await fetchOfficialPrimaryResetAt()
+  const first = await fetchOfficialDispatchResetAt()
+  if (first === null) {
+    return 'unlimited'
+  }
   if (first === undefined) {
     return 'unknown'
   }
 
   await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const second = await fetchOfficialPrimaryResetAt()
+  const second = await fetchOfficialDispatchResetAt()
+  if (second === null) {
+    return 'unlimited'
+  }
   if (second === undefined) {
     return 'unknown'
   }
@@ -671,7 +709,10 @@ async function verifyDispatchActivation(): Promise<'activated' | 'inactive' | 'u
   }
 
   await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const third = await fetchOfficialPrimaryResetAt()
+  const third = await fetchOfficialDispatchResetAt()
+  if (third === null) {
+    return 'unlimited'
+  }
   if (third === undefined) {
     return 'unknown'
   }
@@ -682,12 +723,94 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function quitApp(): void {
+async function checkForUpdates(): Promise<void> {
+  if (isCheckingForUpdates) {
+    return
+  }
+
+  const isEnglish = persistedState.settings.locale === 'en-US'
+  if (!app.isPackaged) {
+    await dialog.showMessageBox({
+      type: 'info',
+      title: isEnglish ? 'Check for Updates' : '检查更新',
+      message: isEnglish
+        ? 'Update checks are available in the installed app.'
+        : '检查更新仅适用于已安装的正式版本。'
+    })
+    return
+  }
+
+  isCheckingForUpdates = true
+  refreshTrayMenu()
+
+  try {
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    const update = await autoUpdater.checkForUpdates()
+    if (!update) {
+      throw new Error(isEnglish ? 'The updater is unavailable.' : '更新服务不可用。')
+    }
+
+    const currentVersion = app.getVersion()
+    if (!update.isUpdateAvailable) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: isEnglish ? 'Check for Updates' : '检查更新',
+        message: isEnglish ? 'You are using the latest version.' : '当前已是最新版本。',
+        detail: isEnglish ? `Current version: v${currentVersion}` : `当前版本：v${currentVersion}`
+      })
+      return
+    }
+
+    const latestVersion = update.updateInfo.version
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: isEnglish ? 'Update Available' : '发现新版本',
+      message: isEnglish
+        ? `Version v${latestVersion} is available.`
+        : `发现新版本 v${latestVersion}。`,
+      detail: isEnglish ? `Current version: v${currentVersion}` : `当前版本：v${currentVersion}`,
+      buttons: isEnglish ? ['Update and Restart', 'Later'] : ['更新并重启', '稍后'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (result.response !== 0) {
+      return
+    }
+
+    new Notification({
+      title: isEnglish ? 'Updating Codex Status' : '正在更新 Codex Status',
+      body: isEnglish ? 'Downloading the update…' : '正在下载更新…',
+      silent: true
+    }).show()
+    await autoUpdater.downloadUpdate()
+    prepareToQuit()
+    autoUpdater.quitAndInstall(true, true)
+  } catch (error) {
+    if (!isQuitting) {
+      dialog.showErrorBox(
+        isEnglish ? 'Update Check Failed' : '检查更新失败',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+  } finally {
+    isCheckingForUpdates = false
+    if (!isQuitting) {
+      refreshTrayMenu()
+    }
+  }
+}
+
+function prepareToQuit(): void {
   isQuitting = true
   clearRefreshTimer()
   clearCodexAuthWatcher()
   tray?.destroy()
   panelWindow?.destroy()
+}
+
+function quitApp(): void {
+  prepareToQuit()
   app.quit()
 }
 
@@ -761,6 +884,7 @@ async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): 
         ...currentSnapshot,
         isRefreshing: false
       }
+      syncCapsuleWindowBounds()
       broadcastSnapshot()
       refreshTrayMenu()
       syncRefreshTimer()
@@ -773,6 +897,12 @@ async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): 
 
 function canRefreshStatus(): boolean {
   return currentSnapshot.canRefresh !== false
+}
+
+function syncCapsuleWindowBounds(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBounds(resolveCapsuleBounds(persistedState.window))
+  }
 }
 
 function broadcastSnapshot(): void {
@@ -890,7 +1020,7 @@ function resolveDraggedCapsuleWindow(payload: CapsuleDragMovePayload): WindowPre
   const workAreaRight = workArea.x + workArea.width
   const isDraggingOrb =
     persistedState.window.viewMode === 'orb' && Boolean(persistedState.window.dockEdge)
-  const size = isDraggingOrb ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
+  const size = resolveCapsuleWindowSize(isDraggingOrb ? 'orb' : 'capsule')
   const x = clamp(
     desiredX,
     workArea.x + CAPSULE_DOCK_EDGE_GAP,
@@ -922,7 +1052,9 @@ function resolveSettledCapsuleWindow(preferences: WindowPreferences): WindowPref
   })
   const workArea = getTargetWorkArea(capsuleBounds.x, capsuleBounds.y)
   const workAreaRight = workArea.x + workArea.width
-  const capsuleRight = capsuleBounds.x + CAPSULE_WINDOW_SIZE.width
+  const capsuleSize = resolveCapsuleWindowSize('capsule')
+  const orbSize = resolveCapsuleWindowSize('orb')
+  const capsuleRight = capsuleBounds.x + capsuleSize.width
   let dockEdge: DockEdge | undefined
 
   if (capsuleBounds.x <= workArea.x + CAPSULE_DOCK_THRESHOLD) {
@@ -940,16 +1072,16 @@ function resolveSettledCapsuleWindow(preferences: WindowPreferences): WindowPref
   }
 
   const y = clamp(
-    capsuleBounds.y + Math.round((CAPSULE_WINDOW_SIZE.height - ORB_WINDOW_SIZE.height) / 2),
+    capsuleBounds.y + Math.round((capsuleSize.height - orbSize.height) / 2),
     workArea.y + CAPSULE_EDGE_GAP,
-    workArea.y + workArea.height - ORB_WINDOW_SIZE.height - CAPSULE_EDGE_GAP
+    workArea.y + workArea.height - orbSize.height - CAPSULE_EDGE_GAP
   )
 
   return {
     x:
       dockEdge === 'left'
         ? workArea.x + CAPSULE_DOCK_EDGE_GAP
-        : workAreaRight - ORB_WINDOW_SIZE.width - CAPSULE_DOCK_EDGE_GAP,
+        : workAreaRight - orbSize.width - CAPSULE_DOCK_EDGE_GAP,
     y,
     viewMode: 'orb',
     dockEdge
@@ -960,7 +1092,9 @@ function resolveSettledOrbWindow(preferences: WindowPreferences): WindowPreferen
   const orbBounds = resolveCapsuleBounds(preferences, true)
   const workArea = getTargetWorkArea(orbBounds.x, orbBounds.y)
   const workAreaRight = workArea.x + workArea.width
-  const orbRight = orbBounds.x + ORB_WINDOW_SIZE.width
+  const capsuleSize = resolveCapsuleWindowSize('capsule')
+  const orbSize = resolveCapsuleWindowSize('orb')
+  const orbRight = orbBounds.x + orbSize.width
   const keepsLeftDock =
     preferences.dockEdge === 'left' && orbBounds.x <= workArea.x + CAPSULE_UNDOCK_THRESHOLD
   const keepsRightDock =
@@ -971,7 +1105,7 @@ function resolveSettledOrbWindow(preferences: WindowPreferences): WindowPreferen
       x:
         preferences.dockEdge === 'left'
           ? workArea.x + CAPSULE_DOCK_EDGE_GAP
-          : workAreaRight - ORB_WINDOW_SIZE.width - CAPSULE_DOCK_EDGE_GAP,
+          : workAreaRight - orbSize.width - CAPSULE_DOCK_EDGE_GAP,
       y: orbBounds.y,
       viewMode: 'orb',
       dockEdge: preferences.dockEdge
@@ -980,14 +1114,14 @@ function resolveSettledOrbWindow(preferences: WindowPreferences): WindowPreferen
 
   return {
     x: clamp(
-      orbBounds.x + Math.round((ORB_WINDOW_SIZE.width - CAPSULE_WINDOW_SIZE.width) / 2),
+      orbBounds.x + Math.round((orbSize.width - capsuleSize.width) / 2),
       workArea.x + CAPSULE_EDGE_GAP,
-      workAreaRight - CAPSULE_WINDOW_SIZE.width - CAPSULE_EDGE_GAP
+      workAreaRight - capsuleSize.width - CAPSULE_EDGE_GAP
     ),
     y: clamp(
-      orbBounds.y + Math.round((ORB_WINDOW_SIZE.height - CAPSULE_WINDOW_SIZE.height) / 2),
+      orbBounds.y + Math.round((orbSize.height - capsuleSize.height) / 2),
       workArea.y + CAPSULE_EDGE_GAP,
-      workArea.y + workArea.height - CAPSULE_WINDOW_SIZE.height - CAPSULE_EDGE_GAP
+      workArea.y + workArea.height - capsuleSize.height - CAPSULE_EDGE_GAP
     ),
     viewMode: 'capsule'
   }
@@ -1001,7 +1135,7 @@ function resolveCapsuleBounds(
     windowPreferences.viewMode === 'orb' && (windowPreferences.dockEdge || allowFloatingOrb)
       ? windowPreferences.viewMode
       : 'capsule'
-  const { width, height } = viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
+  const { width, height } = resolveCapsuleWindowSize(viewMode)
   const workArea = getTargetWorkArea(windowPreferences.x, windowPreferences.y)
   const fallbackX = workArea.x + workArea.width - width - 40
   const fallbackY = workArea.y + 36
@@ -1034,6 +1168,25 @@ function resolveCapsuleBounds(
     width,
     height
   }
+}
+
+function resolveCapsuleWindowSize(viewMode: 'capsule' | 'orb'): {
+  width: number
+  height: number
+} {
+  const size = viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
+  const hasSingleRateLimit =
+    Number(currentSnapshot.rateLimits.primary !== undefined) +
+      Number(currentSnapshot.rateLimits.secondary !== undefined) ===
+    1
+
+  if (!hasSingleRateLimit) {
+    return size
+  }
+
+  return viewMode === 'orb'
+    ? { ...size, height: SINGLE_ORB_WINDOW_HEIGHT }
+    : { ...size, width: SINGLE_CAPSULE_WINDOW_WIDTH }
 }
 
 function resolvePanelBounds(x?: number, y?: number): Rectangle {

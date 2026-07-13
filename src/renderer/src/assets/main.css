@@ -208,6 +208,24 @@ body {
   transform: translate(-50%, -50%);
 }
 
+.capsule__metrics--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.capsule__metrics--single::after {
+  content: none;
+}
+
+.capsule__metrics--single .metric-segment {
+  padding-right: 18px;
+  padding-left: 18px;
+}
+
+.capsule__metrics--single .metric-segment__progress {
+  right: 18px;
+  left: 18px;
+}
+
 .metric-segment {
   min-width: 0;
   min-height: 100%;
@@ -333,6 +351,14 @@ body {
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   overflow: hidden;
   border-radius: 17px;
+}
+
+.capsule__edge-metrics--single {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.capsule__edge-metrics--single .edge-metric::after {
+  content: none;
 }
 
 .edge-metric {
@@ -511,6 +537,10 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+}
+
+.quota-grid--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .quota-card {

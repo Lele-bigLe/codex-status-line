@@ -77,7 +77,7 @@ export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
   let officialIssue: string | undefined
 
   const officialLookup = await getOfficialRateLimits(localRateLimits)
-  if (officialLookup.rateLimits && hasRateLimits(officialLookup.rateLimits)) {
+  if (officialLookup.rateLimits !== undefined) {
     rateLimits = officialLookup.rateLimits
     rateLimitSource = 'official'
   } else {
@@ -125,14 +125,14 @@ async function getOfficialRateLimits(
 
   try {
     let rateLimits = await requestOfficialRateLimits(headers)
-    if (shouldRecheckOfficialRateLimits(rateLimits, localRateLimits)) {
+    if (rateLimits && shouldRecheckOfficialRateLimits(rateLimits, localRateLimits)) {
       await new Promise((resolve) => setTimeout(resolve, OFFICIAL_QUOTA_RECHECK_DELAY_MS))
       rateLimits = await requestOfficialRateLimits(headers)
     }
 
-    return hasRateLimits(rateLimits)
+    return rateLimits !== undefined
       ? { rateLimits, canRefresh: true }
-      : { canRefresh: true, issue: '官方接口未返回额度窗口' }
+      : { canRefresh: true, issue: '官方接口未返回额度信息' }
   } catch (error) {
     return { canRefresh: true, issue: error instanceof Error ? error.message : String(error) }
   }
@@ -140,12 +140,13 @@ async function getOfficialRateLimits(
 
 async function requestOfficialRateLimits(
   headers: Record<string, string>
-): Promise<UsageSnapshot['rateLimits']> {
-  const response = await requestJson(
-    OFFICIAL_CODEX_USAGE_URL,
-    headers,
-    OFFICIAL_QUOTA_TIMEOUT_MS
-  )
+): Promise<UsageSnapshot['rateLimits'] | undefined> {
+  const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
+  const body = getRecord(response)
+  if (!getRecord(body?.rate_limit ?? body?.rateLimit)) {
+    return undefined
+  }
+
   return parseOfficialRateLimits(response, new Date())
 }
 
@@ -185,9 +186,23 @@ function buildOfficialHeaders(credentials: {
   return headers
 }
 
-// 5h 窗口未激活时,官方接口的 reset_at 恒等于"当前时间 + 窗口全长"并随查询时间漂移;
+// null 表示官方明确未返回任何计时窗口;undefined 表示接口不可用或响应无效。
+export function parseOfficialDispatchResetAt(response: unknown): number | null | undefined {
+  const body = getRecord(response)
+  const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
+  if (!rateLimit) {
+    return undefined
+  }
+
+  const windowState =
+    getRecord(rateLimit.primary_window ?? rateLimit.primaryWindow) ??
+    getRecord(rateLimit.secondary_window ?? rateLimit.secondaryWindow)
+  return windowState ? getNonNegativeNumber(windowState.reset_at ?? windowState.resetAt) : null
+}
+
+// 窗口未激活时,官方接口的 reset_at 恒等于"当前时间 + 窗口全长"并随查询时间漂移;
 // 激活后 reset_at 固定不变。调用方据此用两次间隔查询判断投送是否真正启动了计时窗口。
-export async function fetchOfficialPrimaryResetAt(): Promise<number | undefined> {
+export async function fetchOfficialDispatchResetAt(): Promise<number | null | undefined> {
   const credentialLookup = await readOfficialCodexCredentials()
   if (!credentialLookup.credentials) {
     return undefined
@@ -199,10 +214,7 @@ export async function fetchOfficialPrimaryResetAt(): Promise<number | undefined>
       buildOfficialHeaders(credentialLookup.credentials),
       OFFICIAL_QUOTA_TIMEOUT_MS
     )
-    const body = getRecord(response)
-    const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
-    const primary = getRecord(rateLimit?.primary_window ?? rateLimit?.primaryWindow)
-    return getNonNegativeNumber(primary?.reset_at ?? primary?.resetAt)
+    return parseOfficialDispatchResetAt(response)
   } catch {
     return undefined
   }
@@ -283,7 +295,10 @@ function requestJson(
   })
 }
 
-function parseOfficialRateLimits(response: unknown, observedAt: Date): UsageSnapshot['rateLimits'] {
+export function parseOfficialRateLimits(
+  response: unknown,
+  observedAt: Date
+): UsageSnapshot['rateLimits'] {
   const body = getRecord(response)
   const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
   if (!rateLimit) {

@@ -64,6 +64,24 @@ jobs:
           echo "tag_name=${REQUESTED_TAG}" >> "${GITHUB_OUTPUT}"
           echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
 
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          PRERELEASE_FLAG=()
+          if [ "${PRERELEASE}" = "true" ]; then
+            PRERELEASE_FLAG=(--prerelease)
+          fi
+
+          gh release create "${TAG_NAME}" --draft --title "${TAG_NAME}" --generate-notes --target "${GITHUB_SHA}" "${PRERELEASE_FLAG[@]}"
+
   build:
     name: Build ${{ matrix.name }}
     needs: prepare
@@ -75,19 +93,12 @@ jobs:
           - name: windows
             os: windows-latest
             target: --win
-            artifacts: |
-              dist/*.exe
           - name: macos
             os: macos-latest
             target: --mac
-            artifacts: |
-              dist/*.dmg
           - name: linux
             os: ubuntu-latest
             target: --linux
-            artifacts: |
-              dist/*.AppImage
-              dist/*.deb
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,15 +116,9 @@ jobs:
         run: npm run build
 
       - name: Package installers
-        run: npx electron-builder ${{ matrix.target }} --publish never
-
-      - name: Upload installers
-        uses: actions/upload-artifact@v4
-        with:
-          name: installers-${{ matrix.name }}
-          path: ${{ matrix.artifacts }}
-          if-no-files-found: error
-          retention-days: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npx electron-builder ${{ matrix.target }} --publish always
 
   release:
     name: Publish GitHub Release
@@ -122,35 +127,11 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download installers
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-
-      - name: Create or update release
+      - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          mapfile -d '' ASSETS < <(find release-assets -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" \) -print0)
-
-          if [ "${#ASSETS[@]}" -eq 0 ]; then
-            echo "::error::No installer assets were found."
-            exit 1
-          fi
-
-          PRERELEASE_FLAG=()
-          if [ "${PRERELEASE}" = "true" ]; then
-            PRERELEASE_FLAG=(--prerelease)
-          fi
-
-          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "${ASSETS[@]}" --clobber
-          else
-            gh release create "${TAG_NAME}" "${ASSETS[@]}" --title "${TAG_NAME}" --generate-notes --target "${GITHUB_SHA}" "${PRERELEASE_FLAG[@]}"
-          fi
+          gh release edit "${TAG_NAME}" --draft=false --prerelease="${PRERELEASE}"

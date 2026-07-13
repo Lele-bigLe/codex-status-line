@@ -217,10 +217,15 @@ function App(): React.JSX.Element {
             body: copy.unavailableBody
           }
         : undefined
+  const rateLimitWindows = [snapshot.rateLimits.primary, snapshot.rateLimits.secondary].filter(
+    (windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined
+  )
+  const rateLimitCount = rateLimitWindows.length
+  const displayedRateLimit = rateLimitWindows[0]
   const capsuleDisplayPercent =
     settings.percentageMode === 'used'
-      ? snapshot.rateLimits.primary?.usedPercent
-      : snapshot.rateLimits.primary?.remainingPercent
+      ? displayedRateLimit?.usedPercent
+      : displayedRateLimit?.remainingPercent
   const capsuleTone = resolveMetricTone(capsuleDisplayPercent, settings.percentageMode)
   const capsuleViewMode = windowPreferences.viewMode
   const capsuleClassName = [
@@ -242,16 +247,11 @@ function App(): React.JSX.Element {
       value: sourceValue,
       badge: snapshot.rateLimitSource === 'none' ? undefined : sourceLabel
     },
-    {
-      icon: <ClockIcon />,
-      label: `${snapshot.rateLimits.primary?.label ?? '5h'} ${copy.reset}`,
-      value: formatAbsoluteDate(snapshot.rateLimits.primary?.resetsAt, settings.locale)
-    },
-    {
-      icon: <CalendarIcon />,
-      label: `${snapshot.rateLimits.secondary?.label ?? '7d'} ${copy.reset}`,
-      value: formatAbsoluteDate(snapshot.rateLimits.secondary?.resetsAt, settings.locale)
-    },
+    ...rateLimitWindows.map((windowState) => ({
+      icon: windowState.id === 'primary' ? <ClockIcon /> : <CalendarIcon />,
+      label: `${windowState.label} ${copy.reset}`,
+      value: formatAbsoluteDate(windowState.resetsAt, settings.locale)
+    })),
     {
       icon: <HistoryIcon />,
       label: copy.lastRefresh,
@@ -485,35 +485,32 @@ function App(): React.JSX.Element {
             tabIndex={canRefresh ? 0 : -1}
           >
             {capsuleViewMode === 'orb' ? (
-              <div className="capsule__edge-metrics" aria-hidden="true">
-                <EdgeMetricSegment
-                  fallbackLabel="5h"
-                  locale={settings.locale}
-                  percentageMode={settings.percentageMode}
-                  windowState={snapshot.rateLimits.primary}
-                />
-                <EdgeMetricSegment
-                  fallbackLabel="7d"
-                  locale={settings.locale}
-                  percentageMode={settings.percentageMode}
-                  windowState={snapshot.rateLimits.secondary}
-                />
+              <div
+                className={`capsule__edge-metrics${rateLimitCount === 1 ? ' capsule__edge-metrics--single' : ''}`}
+                aria-hidden="true"
+              >
+                {rateLimitWindows.map((windowState) => (
+                  <EdgeMetricSegment
+                    key={windowState.id}
+                    locale={settings.locale}
+                    percentageMode={settings.percentageMode}
+                    windowState={windowState}
+                  />
+                ))}
               </div>
             ) : (
               <div className="capsule__summary" aria-hidden="true">
-                <div className="capsule__metrics">
-                  <MetricSegment
-                    fallbackLabel="5h"
-                    locale={settings.locale}
-                    percentageMode={settings.percentageMode}
-                    windowState={snapshot.rateLimits.primary}
-                  />
-                  <MetricSegment
-                    fallbackLabel="7d"
-                    locale={settings.locale}
-                    percentageMode={settings.percentageMode}
-                    windowState={snapshot.rateLimits.secondary}
-                  />
+                <div
+                  className={`capsule__metrics${rateLimitCount === 1 ? ' capsule__metrics--single' : ''}`}
+                >
+                  {rateLimitWindows.map((windowState) => (
+                    <MetricSegment
+                      key={windowState.id}
+                      locale={settings.locale}
+                      percentageMode={settings.percentageMode}
+                      windowState={windowState}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -539,21 +536,16 @@ function App(): React.JSX.Element {
                 </div>
               </div>
 
-              <div className="quota-grid">
-                <QuotaCard
-                  fallbackLabel="5h"
-                  locale={settings.locale}
-                  modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
-                  percentageMode={settings.percentageMode}
-                  windowState={snapshot.rateLimits.primary}
-                />
-                <QuotaCard
-                  fallbackLabel="7d"
-                  locale={settings.locale}
-                  modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
-                  percentageMode={settings.percentageMode}
-                  windowState={snapshot.rateLimits.secondary}
-                />
+              <div className={`quota-grid${rateLimitCount === 1 ? ' quota-grid--single' : ''}`}>
+                {rateLimitWindows.map((windowState) => (
+                  <QuotaCard
+                    key={windowState.id}
+                    locale={settings.locale}
+                    modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
+                    percentageMode={settings.percentageMode}
+                    windowState={windowState}
+                  />
+                ))}
               </div>
 
               <div className="panel__rows">
@@ -753,15 +745,13 @@ function App(): React.JSX.Element {
 }
 
 function MetricSegment({
-  fallbackLabel,
   locale,
   percentageMode,
   windowState
 }: {
-  fallbackLabel: string
   locale: LocaleCode
   percentageMode: PercentageMode
-  windowState?: RateLimitWindowSnapshot
+  windowState: RateLimitWindowSnapshot
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
@@ -772,7 +762,7 @@ function MetricSegment({
   return (
     <div className={`metric-segment metric-segment--${tone}`} style={progressStyle}>
       <span className="metric-segment__label">
-        <span className="metric-segment__name">{windowState?.label ?? fallbackLabel}</span>
+        <span className="metric-segment__name">{windowState.label}</span>
         <span className="metric-segment__reset">{resetText}</span>
       </span>
       <div className="metric-segment__value">
@@ -786,15 +776,13 @@ function MetricSegment({
 }
 
 function EdgeMetricSegment({
-  fallbackLabel,
   locale,
   percentageMode,
   windowState
 }: {
-  fallbackLabel: string
   locale: LocaleCode
   percentageMode: PercentageMode
-  windowState?: RateLimitWindowSnapshot
+  windowState: RateLimitWindowSnapshot
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
@@ -804,7 +792,7 @@ function EdgeMetricSegment({
 
   return (
     <div className={`edge-metric edge-metric--${tone}`} style={progressStyle}>
-      <span className="edge-metric__label">{windowState?.label ?? fallbackLabel}</span>
+      <span className="edge-metric__label">{windowState.label}</span>
       <span className="edge-metric__reset">{resetText}</span>
       <span className="edge-metric__value">
         {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
@@ -817,17 +805,15 @@ function EdgeMetricSegment({
 }
 
 function QuotaCard({
-  fallbackLabel,
   locale,
   modeLabel,
   percentageMode,
   windowState
 }: {
-  fallbackLabel: string
   locale: LocaleCode
   modeLabel: string
   percentageMode: PercentageMode
-  windowState?: RateLimitWindowSnapshot
+  windowState: RateLimitWindowSnapshot
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
@@ -837,7 +823,7 @@ function QuotaCard({
   return (
     <div className={`quota-card quota-card--${tone}`} style={progressStyle}>
       <div className="quota-card__head">
-        <span className="quota-card__label">{windowState?.label ?? fallbackLabel}</span>
+        <span className="quota-card__label">{windowState.label}</span>
         <span className="quota-card__mode">{modeLabel}</span>
       </div>
       <div className="quota-card__value">
