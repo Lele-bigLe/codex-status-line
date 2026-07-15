@@ -217,9 +217,7 @@ function App(): React.JSX.Element {
             body: copy.unavailableBody
           }
         : undefined
-  const rateLimitWindows = [snapshot.rateLimits.primary, snapshot.rateLimits.secondary].filter(
-    (windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined
-  )
+  const rateLimitWindows = snapshot.rateLimits
   const rateLimitCount = rateLimitWindows.length
   const displayedRateLimit = rateLimitWindows[0]
   const capsuleDisplayPercent =
@@ -248,7 +246,12 @@ function App(): React.JSX.Element {
       badge: snapshot.rateLimitSource === 'none' ? undefined : sourceLabel
     },
     ...rateLimitWindows.map((windowState) => ({
-      icon: windowState.id === 'primary' ? <ClockIcon /> : <CalendarIcon />,
+      icon:
+        windowState.windowMinutes !== undefined && windowState.windowMinutes < 1440 ? (
+          <ClockIcon />
+        ) : (
+          <CalendarIcon />
+        ),
       label: `${windowState.label} ${copy.reset}`,
       value: formatAbsoluteDate(windowState.resetsAt, settings.locale)
     })),
@@ -487,6 +490,11 @@ function App(): React.JSX.Element {
             {capsuleViewMode === 'orb' ? (
               <div
                 className={`capsule__edge-metrics${rateLimitCount === 1 ? ' capsule__edge-metrics--single' : ''}`}
+                style={
+                  rateLimitCount > 2
+                    ? { gridTemplateRows: `repeat(${rateLimitCount}, minmax(0, 1fr))` }
+                    : undefined
+                }
                 aria-hidden="true"
               >
                 {rateLimitWindows.map((windowState) => (
@@ -502,6 +510,11 @@ function App(): React.JSX.Element {
               <div className="capsule__summary" aria-hidden="true">
                 <div
                   className={`capsule__metrics${rateLimitCount === 1 ? ' capsule__metrics--single' : ''}`}
+                  style={
+                    rateLimitCount > 2
+                      ? { gridTemplateColumns: `repeat(${rateLimitCount}, minmax(0, 1fr))` }
+                      : undefined
+                  }
                 >
                   {rateLimitWindows.map((windowState) => (
                     <MetricSegment

@@ -44,8 +44,9 @@ import {
   type WindowPreferences
 } from '../shared/capsule'
 import {
+  areOfficialDispatchResetAtsStable,
   collectUsageSnapshot,
-  fetchOfficialDispatchResetAt,
+  fetchOfficialDispatchResetAts,
   resolveCodexAuthPath
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
@@ -479,38 +480,23 @@ function getTrayLabels(): Record<
 }
 
 function buildTrayTooltip(): string {
-  const primaryText = formatTrayWindowText(currentSnapshot.rateLimits.primary)
-  const secondaryText = formatTrayWindowText(currentSnapshot.rateLimits.secondary)
+  const windowTexts = currentSnapshot.rateLimits.map(formatTrayWindowText)
   const suffix = currentSnapshot.isRefreshing
     ? persistedState.settings.locale === 'en-US'
       ? ' · refreshing'
       : ' · 刷新中'
     : ''
 
-  if (!primaryText && !secondaryText) {
+  if (windowTexts.length === 0) {
     return persistedState.settings.locale === 'en-US'
       ? `Codex status unavailable${suffix}`
       : `Codex 暂无额度数据${suffix}`
   }
 
-  const segments = ['Codex']
-  if (primaryText) {
-    segments.push(primaryText)
-  }
-  if (secondaryText) {
-    segments.push(secondaryText)
-  }
-
-  return `${segments.join('  ')}${suffix}`
+  return `${['Codex', ...windowTexts].join('  ')}${suffix}`
 }
 
-function formatTrayWindowText(
-  windowState: UsageSnapshot['rateLimits']['primary']
-): string | undefined {
-  if (!windowState) {
-    return undefined
-  }
-
+function formatTrayWindowText(windowState: UsageSnapshot['rateLimits'][number]): string {
   const percentage =
     persistedState.settings.percentageMode === 'used'
       ? windowState.usedPercent
@@ -685,10 +671,7 @@ function launchCodexDispatch(): void {
 async function verifyDispatchActivation(): Promise<
   'activated' | 'inactive' | 'unlimited' | 'unknown'
 > {
-  const isStable = (left: number, right: number): boolean =>
-    Math.abs(left - right) <= CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
-
-  const first = await fetchOfficialDispatchResetAt()
+  const first = await fetchOfficialDispatchResetAts()
   if (first === null) {
     return 'unlimited'
   }
@@ -697,26 +680,38 @@ async function verifyDispatchActivation(): Promise<
   }
 
   await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const second = await fetchOfficialDispatchResetAt()
+  const second = await fetchOfficialDispatchResetAts()
   if (second === null) {
     return 'unlimited'
   }
   if (second === undefined) {
     return 'unknown'
   }
-  if (isStable(first, second)) {
+  if (
+    areOfficialDispatchResetAtsStable(
+      first,
+      second,
+      CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
+    )
+  ) {
     return 'activated'
   }
 
   await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const third = await fetchOfficialDispatchResetAt()
+  const third = await fetchOfficialDispatchResetAts()
   if (third === null) {
     return 'unlimited'
   }
   if (third === undefined) {
     return 'unknown'
   }
-  return isStable(second, third) ? 'activated' : 'inactive'
+  return areOfficialDispatchResetAtsStable(
+    second,
+    third,
+    CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
+  )
+    ? 'activated'
+    : 'inactive'
 }
 
 function delay(ms: number): Promise<void> {
@@ -1175,18 +1170,25 @@ function resolveCapsuleWindowSize(viewMode: 'capsule' | 'orb'): {
   height: number
 } {
   const size = viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
-  const hasSingleRateLimit =
-    Number(currentSnapshot.rateLimits.primary !== undefined) +
-      Number(currentSnapshot.rateLimits.secondary !== undefined) ===
-    1
+  const rateLimitCount = currentSnapshot.rateLimits.length
 
-  if (!hasSingleRateLimit) {
+  if (rateLimitCount === 0) {
     return size
   }
 
   return viewMode === 'orb'
-    ? { ...size, height: SINGLE_ORB_WINDOW_HEIGHT }
-    : { ...size, width: SINGLE_CAPSULE_WINDOW_WIDTH }
+    ? {
+        ...size,
+        height:
+          SINGLE_ORB_WINDOW_HEIGHT +
+          (rateLimitCount - 1) * (ORB_WINDOW_SIZE.height - SINGLE_ORB_WINDOW_HEIGHT)
+      }
+    : {
+        ...size,
+        width:
+          SINGLE_CAPSULE_WINDOW_WIDTH +
+          (rateLimitCount - 1) * (CAPSULE_WINDOW_SIZE.width - SINGLE_CAPSULE_WINDOW_WIDTH)
+      }
 }
 
 function resolvePanelBounds(x?: number, y?: number): Rectangle {

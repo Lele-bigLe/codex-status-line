@@ -9,7 +9,7 @@ export type DockEdge = 'left' | 'right'
 export type RendererCommandType = 'show-panel-view'
 
 export interface RateLimitWindowSnapshot {
-  id: 'primary' | 'secondary'
+  id: string
   label: string
   windowMinutes?: number
   usedPercent?: number
@@ -24,10 +24,7 @@ export interface UsageSnapshot {
   isRefreshing: boolean
   canRefresh: boolean
   generatedAt?: string
-  rateLimits: {
-    primary?: RateLimitWindowSnapshot
-    secondary?: RateLimitWindowSnapshot
-  }
+  rateLimits: RateLimitWindowSnapshot[]
   rateLimitSource: RateLimitSource
   sourceHost: string
   issues: string[]
@@ -144,7 +141,7 @@ export function createEmptySnapshot(): UsageSnapshot {
     available: false,
     isRefreshing: false,
     canRefresh: true,
-    rateLimits: {},
+    rateLimits: [],
     rateLimitSource: 'none',
     sourceHost: 'No data',
     issues: [],

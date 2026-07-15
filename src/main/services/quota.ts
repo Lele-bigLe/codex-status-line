@@ -43,9 +43,6 @@ const OFFICIAL_CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const OFFICIAL_QUOTA_TIMEOUT_MS = 8000
 const OFFICIAL_QUOTA_RECHECK_DELAY_MS = 1000
 const FILE_SCAN_LIMIT = 80
-const FIVE_HOUR_MINUTES = 300
-const WEEKLY_MINUTES = 10080
-
 export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
   const checkedPaths = resolveSessionPaths()
   const missingPaths: string[] = []
@@ -142,11 +139,6 @@ async function requestOfficialRateLimits(
   headers: Record<string, string>
 ): Promise<UsageSnapshot['rateLimits'] | undefined> {
   const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
-  const body = getRecord(response)
-  if (!getRecord(body?.rate_limit ?? body?.rateLimit)) {
-    return undefined
-  }
-
   return parseOfficialRateLimits(response, new Date())
 }
 
@@ -154,18 +146,18 @@ export function shouldRecheckOfficialRateLimits(
   officialRateLimits: UsageSnapshot['rateLimits'],
   localRateLimits: UsageSnapshot['rateLimits']
 ): boolean {
-  const officialPrimary = officialRateLimits.primary?.usedPercent
-  const officialSecondary = officialRateLimits.secondary?.usedPercent
-  const localPrimary = localRateLimits.primary?.usedPercent
-  const localSecondary = localRateLimits.secondary?.usedPercent
-
+  const localById = new Map(localRateLimits.map((windowState) => [windowState.id, windowState]))
   return (
-    officialPrimary !== undefined &&
-    officialSecondary !== undefined &&
-    localPrimary !== undefined &&
-    localSecondary !== undefined &&
-    officialPrimary < localPrimary &&
-    officialSecondary < localSecondary
+    officialRateLimits.length > 0 &&
+    officialRateLimits.length === localRateLimits.length &&
+    officialRateLimits.every((officialWindow) => {
+      const localWindow = localById.get(officialWindow.id)
+      return (
+        officialWindow.usedPercent !== undefined &&
+        localWindow?.usedPercent !== undefined &&
+        officialWindow.usedPercent < localWindow.usedPercent
+      )
+    })
   )
 }
 
@@ -186,23 +178,48 @@ function buildOfficialHeaders(credentials: {
   return headers
 }
 
-// null 表示官方明确未返回任何计时窗口;undefined 表示接口不可用或响应无效。
-export function parseOfficialDispatchResetAt(response: unknown): number | null | undefined {
+// null 表示官方明确未返回计时窗口;undefined 表示接口不可用或窗口数据无效。
+export function parseOfficialDispatchResetAts(
+  response: unknown
+): Record<string, number> | null | undefined {
   const body = getRecord(response)
   const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
   if (!rateLimit) {
     return undefined
   }
 
-  const windowState =
-    getRecord(rateLimit.primary_window ?? rateLimit.primaryWindow) ??
-    getRecord(rateLimit.secondary_window ?? rateLimit.secondaryWindow)
-  return windowState ? getNonNegativeNumber(windowState.reset_at ?? windowState.resetAt) : null
+  const resetAts: Record<string, number> = {}
+  for (const [id, windowState] of getOfficialWindowEntries(rateLimit)) {
+    const resetAt = getNonNegativeNumber(windowState.reset_at ?? windowState.resetAt)
+    if (resetAt === undefined) {
+      return undefined
+    }
+    resetAts[id] = resetAt
+  }
+
+  return Object.keys(resetAts).length > 0 ? resetAts : null
+}
+
+export function areOfficialDispatchResetAtsStable(
+  left: Record<string, number>,
+  right: Record<string, number>,
+  toleranceSeconds: number
+): boolean {
+  const keys = Object.keys(left)
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) =>
+        right[key] !== undefined && Math.abs(left[key] - right[key]) <= toleranceSeconds
+    )
+  )
 }
 
 // 窗口未激活时,官方接口的 reset_at 恒等于"当前时间 + 窗口全长"并随查询时间漂移;
-// 激活后 reset_at 固定不变。调用方据此用两次间隔查询判断投送是否真正启动了计时窗口。
-export async function fetchOfficialDispatchResetAt(): Promise<number | null | undefined> {
+// 激活后 reset_at 固定不变。调用方据此逐个判断官方实际返回的窗口是否启动计时。
+export async function fetchOfficialDispatchResetAts(): Promise<
+  Record<string, number> | null | undefined
+> {
   const credentialLookup = await readOfficialCodexCredentials()
   if (!credentialLookup.credentials) {
     return undefined
@@ -214,7 +231,7 @@ export async function fetchOfficialDispatchResetAt(): Promise<number | null | un
       buildOfficialHeaders(credentialLookup.credentials),
       OFFICIAL_QUOTA_TIMEOUT_MS
     )
-    return parseOfficialDispatchResetAt(response)
+    return parseOfficialDispatchResetAts(response)
   } catch {
     return undefined
   }
@@ -298,29 +315,21 @@ function requestJson(
 export function parseOfficialRateLimits(
   response: unknown,
   observedAt: Date
-): UsageSnapshot['rateLimits'] {
+): UsageSnapshot['rateLimits'] | undefined {
   const body = getRecord(response)
   const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
   if (!rateLimit) {
-    return {}
+    return undefined
   }
 
-  return {
-    primary: createOfficialRateLimitWindow(
-      'primary',
-      getRecord(rateLimit.primary_window ?? rateLimit.primaryWindow),
-      observedAt
-    ),
-    secondary: createOfficialRateLimitWindow(
-      'secondary',
-      getRecord(rateLimit.secondary_window ?? rateLimit.secondaryWindow),
-      observedAt
-    )
-  }
+  const windows = getOfficialWindowEntries(rateLimit)
+    .map(([id, record]) => createOfficialRateLimitWindow(id, record, observedAt))
+    .filter((windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined)
+  return windows.length > 0 ? windows : undefined
 }
 
 function createOfficialRateLimitWindow(
-  id: 'primary' | 'secondary',
+  id: string,
   record: Record<string, unknown> | undefined,
   observedAt: Date
 ): RateLimitWindowSnapshot | undefined {
@@ -343,12 +352,7 @@ function createOfficialRateLimitWindow(
   return createRateLimitWindow(
     id,
     {
-      windowMinutes:
-        limitWindowSeconds !== undefined
-          ? limitWindowSeconds / 60
-          : id === 'primary'
-            ? FIVE_HOUR_MINUTES
-            : WEEKLY_MINUTES,
+      windowMinutes: limitWindowSeconds !== undefined ? limitWindowSeconds / 60 : undefined,
       usedPercent,
       resetsAtMs
     },
@@ -509,21 +513,21 @@ function normalizeRateLimit(record: Record<string, unknown> | undefined): RawRat
 
 function toRateLimits(snapshot: RateLimitSnapshot | undefined): UsageSnapshot['rateLimits'] {
   if (!snapshot) {
-    return {}
+    return []
   }
 
-  return {
-    primary: snapshot.primary
+  return [
+    snapshot.primary
       ? createRateLimitWindow('primary', snapshot.primary, snapshot.timestamp)
       : undefined,
-    secondary: snapshot.secondary
+    snapshot.secondary
       ? createRateLimitWindow('secondary', snapshot.secondary, snapshot.timestamp)
       : undefined
-  }
+  ].filter((windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined)
 }
 
 function createRateLimitWindow(
-  id: 'primary' | 'secondary',
+  id: string,
   raw: RawRateLimit,
   snapshotTime: Date
 ): RateLimitWindowSnapshot {
@@ -553,18 +557,11 @@ function createRateLimitWindow(
 }
 
 function resolveWindowLabel(
-  id: 'primary' | 'secondary',
+  id: string,
   windowMinutes: number | undefined
 ): string {
   if (windowMinutes === undefined) {
-    return id === 'primary' ? '5h' : '7d'
-  }
-
-  if (Math.abs(windowMinutes - FIVE_HOUR_MINUTES) <= 5) {
-    return '5h'
-  }
-  if (Math.abs(windowMinutes - WEEKLY_MINUTES) <= 90) {
-    return '7d'
+    return id
   }
   if (windowMinutes >= 1440) {
     return `${Math.round(windowMinutes / 1440)}d`
@@ -621,7 +618,21 @@ function clampPercent(value: number | undefined): number | undefined {
 }
 
 function hasRateLimits(rateLimits: UsageSnapshot['rateLimits']): boolean {
-  return rateLimits.primary !== undefined || rateLimits.secondary !== undefined
+  return rateLimits.length > 0
+}
+
+function getOfficialWindowEntries(
+  rateLimit: Record<string, unknown>
+): Array<[string, Record<string, unknown>]> {
+  const windows = new Map<string, Record<string, unknown>>()
+  for (const [key, value] of Object.entries(rateLimit)) {
+    const suffix = key.endsWith('_window') ? '_window' : key.endsWith('Window') ? 'Window' : ''
+    const windowState = suffix ? getRecord(value) : undefined
+    if (windowState) {
+      windows.set(key.slice(0, -suffix.length), windowState)
+    }
+  }
+  return Array.from(windows.entries())
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {

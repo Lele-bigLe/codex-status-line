@@ -196,24 +196,20 @@ body {
   overflow: hidden;
 }
 
-.capsule__metrics::after {
+.metric-segment + .metric-segment::before {
   width: 1px;
   height: 26px;
   position: absolute;
   top: 50%;
-  left: 42.8%;
+  left: 0;
   content: '';
   background:
     linear-gradient(180deg, transparent 0%, rgba(215, 226, 238, 0.12) 30%, rgba(215, 226, 238, 0.12) 70%, transparent 100%);
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
 }
 
 .capsule__metrics--single {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.capsule__metrics--single::after {
-  content: none;
 }
 
 .capsule__metrics--single .metric-segment {
@@ -374,7 +370,7 @@ body {
   --metric-accent: rgba(151, 163, 176, 0.74);
 }
 
-.edge-metric:first-child::after {
+.edge-metric:not(:last-child)::after {
   height: 1px;
   position: absolute;
   right: 12px;
