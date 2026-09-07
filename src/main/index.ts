@@ -46,7 +46,9 @@ import {
 import {
   areOfficialDispatchResetAtsStable,
   collectUsageSnapshot,
+  clearQuotaCache,
   fetchOfficialDispatchResetAts,
+  readOfficialCodexCredentials,
   resolveCodexAuthPath
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
@@ -63,6 +65,7 @@ const CHANNELS = {
   refresh: 'codex-status:refresh',
   updateSettings: 'codex-status:update-settings',
   closePanel: 'codex-status:close-panel',
+  openPanel: 'codex-status:open-panel',
   moveCapsuleWindow: 'codex-status:move-capsule-window',
   finishCapsuleWindowDrag: 'codex-status:finish-capsule-window-drag',
   snapshotUpdated: 'codex-status:snapshot-updated',
@@ -77,7 +80,7 @@ const CODEX_DISPATCH_TIMEOUT_MS = 180_000
 const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
 const CODEX_DISPATCH_VERIFY_DELAY_MS = 8000
 const SINGLE_CAPSULE_WINDOW_WIDTH = 160
-const SINGLE_ORB_WINDOW_HEIGHT = 96
+const SINGLE_ORB_WINDOW_HEIGHT = 108
 // 激活态下官方接口的 reset_at 实测存在 ±1s 抖动;漂移态两次查询差值约等于查询间隔(8s+),
 // 容差取 3s 可同时避开抖动误判和漂移漏判
 const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
@@ -85,10 +88,16 @@ const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let trayMenuKey: string | undefined
+let trayTooltip: string | undefined
 let dispatchChild: ChildProcess | undefined
 let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
 let refreshPromise: Promise<void> | undefined
+let credentialRevision = 0
+let currentAccountKey: string | undefined
+let refreshQueued = false
+let isCapsuleDragging = false
 let watchedCodexAuthPath: string | undefined
 let isCheckingForUpdates = false
 let isQuitting = false
@@ -337,6 +346,7 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(CHANNELS.updateSettings, async (_, patch: Partial<AppSettings>) => {
+    const previousSettings = persistedState.settings
     const nextSettings = syncLaunchAtLoginPreference({
       ...persistedState.settings,
       ...patch
@@ -352,7 +362,12 @@ function registerIpcHandlers(): void {
     refreshTrayMenu()
     broadcastPreferences()
 
-    if (persistedState.settings.refreshMode === 'auto' && canRefreshStatus()) {
+    if (
+      nextSettings.refreshMode === 'auto' &&
+      canRefreshStatus() &&
+      (previousSettings.refreshMode !== nextSettings.refreshMode ||
+        previousSettings.refreshIntervalSeconds !== nextSettings.refreshIntervalSeconds)
+    ) {
       void refreshStatus()
     }
 
@@ -361,6 +376,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(CHANNELS.closePanel, async () => {
     panelWindow?.hide()
+  })
+
+  ipcMain.handle(CHANNELS.openPanel, async () => {
+    openPanelWindow('details')
   })
 
   ipcMain.handle(CHANNELS.moveCapsuleWindow, async (_, payload: CapsuleDragMovePayload) => {
@@ -375,6 +394,8 @@ function registerIpcHandlers(): void {
 function createTray(): void {
   const image = nativeImage.createFromPath(trayIcon)
   tray = new Tray(image.isEmpty() ? trayIcon : image.resize({ width: 16, height: 16 }))
+  trayMenuKey = undefined
+  trayTooltip = undefined
   tray.on('click', () => {
     toggleWindowVisibility()
   })
@@ -385,6 +406,19 @@ function refreshTrayMenu(): void {
   if (!tray) {
     return
   }
+
+  const tooltip = buildTrayTooltip()
+  if (tooltip !== trayTooltip) {
+    tray.setToolTip(tooltip)
+    trayTooltip = tooltip
+  }
+  const menuKey = JSON.stringify([
+    persistedState.settings.locale,
+    canRefreshStatus(),
+    Boolean(dispatchChild),
+    isCheckingForUpdates
+  ])
+  if (menuKey === trayMenuKey) return
 
   const labels = getTrayLabels()
   const dispatchMenuItems: MenuItemConstructorOptions[] =
@@ -443,17 +477,11 @@ function refreshTrayMenu(): void {
   ]
 
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate))
-  tray.setToolTip(buildTrayTooltip())
+  trayMenuKey = menuKey
 }
 
 function getTrayLabels(): Record<
-  | 'refresh'
-  | 'dispatch'
-  | 'toggle'
-  | 'details'
-  | 'settings'
-  | 'checkForUpdates'
-  | 'quit',
+  'refresh' | 'dispatch' | 'toggle' | 'details' | 'settings' | 'checkForUpdates' | 'quit',
   string
 > {
   if (persistedState.settings.locale === 'en-US') {
@@ -485,7 +513,11 @@ function buildTrayTooltip(): string {
     ? persistedState.settings.locale === 'en-US'
       ? ' · refreshing'
       : ' · 刷新中'
-    : ''
+    : currentSnapshot.rateLimitSource === 'cache'
+      ? persistedState.settings.locale === 'en-US'
+        ? ' · saved data'
+        : ' · 历史数据'
+      : ''
 
   if (windowTexts.length === 0) {
     return persistedState.settings.locale === 'en-US'
@@ -525,7 +557,7 @@ function showWindow(): void {
   }
 
   const bounds = resolveCapsuleBounds(persistedState.window)
-  mainWindow.setBounds(bounds)
+  setCapsuleBounds(bounds)
   mainWindow.show()
   mainWindow.focus()
 }
@@ -687,13 +719,7 @@ async function verifyDispatchActivation(): Promise<
   if (second === undefined) {
     return 'unknown'
   }
-  if (
-    areOfficialDispatchResetAtsStable(
-      first,
-      second,
-      CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
-    )
-  ) {
+  if (areOfficialDispatchResetAtsStable(first, second, CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS)) {
     return 'activated'
   }
 
@@ -705,11 +731,7 @@ async function verifyDispatchActivation(): Promise<
   if (third === undefined) {
     return 'unknown'
   }
-  return areOfficialDispatchResetAtsStable(
-    second,
-    third,
-    CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS
-  )
+  return areOfficialDispatchResetAtsStable(second, third, CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS)
     ? 'activated'
     : 'inactive'
 }
@@ -816,8 +838,23 @@ function watchCodexAuthFile(): void {
       return
     }
 
-    void refreshStatus({ forceCredentialCheck: true })
+    credentialRevision += 1
+    const revision = credentialRevision
+    void readOfficialCodexCredentials().then((lookup) => {
+      if (isQuitting || revision !== credentialRevision) return
+      syncAccountIdentity(lookup.credentials?.key)
+      void refreshStatus({ forceCredentialCheck: true })
+    })
   })
+}
+
+function syncAccountIdentity(accountKey: string | undefined): void {
+  if (currentAccountKey === accountKey) return
+  currentAccountKey = accountKey
+  clearQuotaCache()
+  currentSnapshot = { ...createEmptySnapshot(), isRefreshing: true }
+  broadcastSnapshot()
+  refreshTrayMenu()
 }
 
 function clearCodexAuthWatcher(): void {
@@ -849,6 +886,7 @@ function clearRefreshTimer(): void {
 
 async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): Promise<void> {
   if (refreshPromise) {
+    if (options.forceCredentialCheck) refreshQueued = true
     return refreshPromise
   }
 
@@ -864,16 +902,22 @@ async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): 
   broadcastSnapshot()
   refreshTrayMenu()
 
+  const revision = credentialRevision
   refreshPromise = (async () => {
     try {
-      currentSnapshot = await collectUsageSnapshot()
+      const lookup = await readOfficialCodexCredentials()
+      if (revision !== credentialRevision) return
+      syncAccountIdentity(lookup.credentials?.key)
+      const nextSnapshot = await collectUsageSnapshot(lookup)
+      if (revision === credentialRevision) currentSnapshot = nextSnapshot
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      currentSnapshot = {
-        ...currentSnapshot,
-        isRefreshing: false,
-        issues: Array.from(new Set([message, ...currentSnapshot.issues])).slice(0, 6)
-      }
+      if (revision === credentialRevision)
+        currentSnapshot = {
+          ...createEmptySnapshot(),
+          isRefreshing: false,
+          issues: [message]
+        }
     } finally {
       currentSnapshot = {
         ...currentSnapshot,
@@ -884,6 +928,10 @@ async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): 
       refreshTrayMenu()
       syncRefreshTimer()
       refreshPromise = undefined
+      if (refreshQueued) {
+        refreshQueued = false
+        void refreshStatus({ forceCredentialCheck: true })
+      }
     }
   })()
 
@@ -895,9 +943,21 @@ function canRefreshStatus(): boolean {
 }
 
 function syncCapsuleWindowBounds(): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBounds(resolveCapsuleBounds(persistedState.window))
-  }
+  if (isCapsuleDragging) return
+  setCapsuleBounds(resolveCapsuleBounds(persistedState.window))
+}
+
+function setCapsuleBounds(bounds: Rectangle): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const current = mainWindow.getBounds()
+  if (
+    current.x === bounds.x &&
+    current.y === bounds.y &&
+    current.width === bounds.width &&
+    current.height === bounds.height
+  )
+    return
+  mainWindow.setBounds(bounds)
 }
 
 function broadcastSnapshot(): void {
@@ -963,12 +1023,14 @@ function moveCapsuleWindow(payload: CapsuleDragMovePayload): WindowPreferences {
     return persistedState.window
   }
 
+  isCapsuleDragging = true
   const nextPreferences = resolveDraggedCapsuleWindow(payload)
   applyCapsuleWindowPreferences(nextPreferences, true)
   return persistedState.window
 }
 
 function finishCapsuleWindowDrag(): WindowPreferences {
+  isCapsuleDragging = false
   if (!mainWindow) {
     return persistedState.window
   }
@@ -991,7 +1053,7 @@ function applyCapsuleWindowPreferences(
       y: bounds.y
     }
   }
-  mainWindow?.setBounds(bounds)
+  setCapsuleBounds(bounds)
   queuePersistState()
 }
 

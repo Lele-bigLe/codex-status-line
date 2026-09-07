@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs'
-import type { Dirent } from 'node:fs'
+import { createHash } from 'node:crypto'
 import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
-import type { RateLimitSource, RateLimitWindowSnapshot, UsageSnapshot } from '../../shared/capsule'
+import type { RateLimitWindowSnapshot, UsageSnapshot } from '../../shared/capsule'
 
 interface RawRateLimit {
   windowMinutes?: number
@@ -12,163 +12,131 @@ interface RawRateLimit {
   resetsInSeconds?: number
 }
 
-interface RateLimitSnapshot {
-  timestamp: Date
-  primary?: RawRateLimit
-  secondary?: RawRateLimit
-}
-
-interface JsonlFileEntry {
-  filePath: string
-  mtimeMs: number
-}
-
-interface OfficialRateLimitLookup {
-  rateLimits?: UsageSnapshot['rateLimits']
-  canRefresh: boolean
-  issue?: string
-}
-
 interface CredentialLookup {
   credentials?: {
     accessToken: string
-    accountId?: string
+    accountId: string
+    key: string
+    account: NonNullable<UsageSnapshot['account']>
   }
   canRefresh: boolean
   issue?: string
 }
 
-const SESSION_SUBDIR = 'sessions'
 const OFFICIAL_CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const OFFICIAL_QUOTA_TIMEOUT_MS = 8000
-const OFFICIAL_QUOTA_RECHECK_DELAY_MS = 1000
-const FILE_SCAN_LIMIT = 80
-export async function collectUsageSnapshot(): Promise<UsageSnapshot> {
-  const checkedPaths = resolveSessionPaths()
-  const missingPaths: string[] = []
-  const files: JsonlFileEntry[] = []
+const CACHE_MAX_AGE_MS = 15 * 60 * 1000
+let cachedSnapshot: { key: string; snapshot: UsageSnapshot } | undefined
 
-  for (const candidate of checkedPaths) {
-    if (!(await pathExists(candidate))) {
-      missingPaths.push(candidate)
-      continue
-    }
+export function clearQuotaCache(): void {
+  cachedSnapshot = undefined
+}
 
-    files.push(...(await collectJsonlFiles(candidate, FILE_SCAN_LIMIT * 3)))
-  }
-
-  files.sort((left, right) => right.mtimeMs - left.mtimeMs)
-  const limitedFiles = files.slice(0, FILE_SCAN_LIMIT)
-  let latestLocalSnapshot: RateLimitSnapshot | undefined
-
-  for (const entry of limitedFiles) {
-    const snapshot = await readLatestRateLimitSnapshot(entry.filePath)
-    if (snapshot && (!latestLocalSnapshot || snapshot.timestamp > latestLocalSnapshot.timestamp)) {
-      latestLocalSnapshot = snapshot
-    }
-  }
-
-  const localRateLimits = toRateLimits(latestLocalSnapshot)
-  let rateLimits = localRateLimits
-  let rateLimitSource: RateLimitSource = hasRateLimits(localRateLimits) ? 'local' : 'none'
-  let officialIssue: string | undefined
-
-  const officialLookup = await getOfficialRateLimits(localRateLimits)
-  if (officialLookup.rateLimits !== undefined) {
-    rateLimits = officialLookup.rateLimits
-    rateLimitSource = 'official'
-  } else {
-    officialIssue = officialLookup.issue
-  }
-
-  const issues: string[] = []
-  if (rateLimitSource !== 'official' && officialIssue) {
-    issues.push(`官方额度不可用：${officialIssue}`)
-  }
-  if (rateLimitSource === 'none' && missingPaths.length === checkedPaths.length) {
-    issues.push('未找到 Codex sessions 目录')
-  }
-  if (rateLimitSource === 'local' && limitedFiles.length === 0) {
-    issues.push('本地 sessions 中没有可解析的额度窗口')
-  }
-
-  return {
-    available: hasRateLimits(rateLimits),
+export async function collectUsageSnapshot(
+  initialLookup?: CredentialLookup
+): Promise<UsageSnapshot> {
+  const lookup = initialLookup ?? (await readOfficialCodexCredentials())
+  const credentials = lookup.credentials
+  const base: UsageSnapshot = {
+    available: false,
     isRefreshing: false,
-    canRefresh: officialLookup.canRefresh,
+    canRefresh: true,
     generatedAt: new Date().toISOString(),
-    rateLimits,
-    rateLimitSource,
-    sourceHost: resolveSourceHost(rateLimitSource),
-    officialIssue,
-    issues: Array.from(new Set(issues)).slice(0, 6),
-    filesScanned: limitedFiles.length,
-    sessionsPath: checkedPaths.find((candidate) => !missingPaths.includes(candidate))
+    rateLimits: [],
+    rateLimitSource: 'none',
+    sourceHost: 'chatgpt.com',
+    account: credentials?.account,
+    authPath: resolveCodexAuthPath(),
+    issues: []
   }
-}
-
-async function getOfficialRateLimits(
-  localRateLimits: UsageSnapshot['rateLimits']
-): Promise<OfficialRateLimitLookup> {
-  const credentialLookup = await readOfficialCodexCredentials()
-  if (!credentialLookup.credentials) {
-    return {
-      canRefresh: credentialLookup.canRefresh,
-      issue: credentialLookup.issue ?? '未找到 Codex OAuth 凭据'
-    }
+  if (!credentials) {
+    clearQuotaCache()
+    return { ...base, officialIssue: lookup.issue, issues: [lookup.issue ?? '无法识别监测账号'] }
   }
-
-  const headers = buildOfficialHeaders(credentialLookup.credentials)
-
+  if (cachedSnapshot?.key !== credentials.key) clearQuotaCache()
+  let rateLimits: UsageSnapshot['rateLimits'] | undefined
+  let issue: string | undefined
   try {
-    let rateLimits = await requestOfficialRateLimits(headers)
-    if (rateLimits && shouldRecheckOfficialRateLimits(rateLimits, localRateLimits)) {
-      await new Promise((resolve) => setTimeout(resolve, OFFICIAL_QUOTA_RECHECK_DELAY_MS))
-      rateLimits = await requestOfficialRateLimits(headers)
+    const response = await requestJson(
+      OFFICIAL_CODEX_USAGE_URL,
+      buildOfficialHeaders(credentials),
+      OFFICIAL_QUOTA_TIMEOUT_MS
+    )
+    const body = getRecord(response)
+    const responseAccount = getString(body?.account_id ?? body?.accountId)
+    if (responseAccount && responseAccount !== credentials.accountId) {
+      clearQuotaCache()
+      throw new Error('额度响应账号不一致,请重新登录 Codex')
     }
-
-    return rateLimits !== undefined
-      ? { rateLimits, canRefresh: true }
-      : { canRefresh: true, issue: '官方接口未返回额度信息' }
+    rateLimits = parseOfficialRateLimits(response, new Date())
+    if (rateLimits === undefined) issue = '官方接口未返回有效额度窗口'
   } catch (error) {
-    return { canRefresh: true, issue: error instanceof Error ? error.message : String(error) }
+    issue = error instanceof Error ? error.message : '官方额度请求失败'
+  }
+  // 换号清空缓存;同账号续期只丢弃旧令牌的响应,保留此前已确认的数据。
+  const latest = await readOfficialCodexCredentials()
+  if (latest.credentials?.key !== credentials.key) {
+    clearQuotaCache()
+    return {
+      ...base,
+      account: latest.credentials?.account,
+      officialIssue: '登录信息已变化,等待重新同步',
+      issues: ['登录信息已变化,等待重新同步']
+    }
+  }
+  if (latest.credentials?.accessToken !== credentials.accessToken) {
+    rateLimits = undefined
+    issue = '登录凭据已更新,等待重新同步'
+  }
+  const generatedAt = new Date().toISOString()
+  if (rateLimits !== undefined) {
+    const snapshot: UsageSnapshot = {
+      ...base,
+      available: rateLimits.length > 0,
+      generatedAt,
+      lastSuccessAt: generatedAt,
+      rateLimits,
+      rateLimitSource: 'official'
+    }
+    cachedSnapshot = { key: credentials.key, snapshot }
+    return snapshot
+  }
+  const cached = selectCachedSnapshot(cachedSnapshot, credentials.key)
+  return {
+    ...base,
+    ...(cached
+      ? {
+          available: cached.available,
+          rateLimits: cached.rateLimits,
+          rateLimitSource: 'cache' as const,
+          lastSuccessAt: cached.lastSuccessAt
+        }
+      : {}),
+    generatedAt,
+    officialIssue: issue,
+    issues: [issue ?? '官方额度暂不可用']
   }
 }
 
-async function requestOfficialRateLimits(
-  headers: Record<string, string>
-): Promise<UsageSnapshot['rateLimits'] | undefined> {
-  const response = await requestJson(OFFICIAL_CODEX_USAGE_URL, headers, OFFICIAL_QUOTA_TIMEOUT_MS)
-  return parseOfficialRateLimits(response, new Date())
-}
-
-export function shouldRecheckOfficialRateLimits(
-  officialRateLimits: UsageSnapshot['rateLimits'],
-  localRateLimits: UsageSnapshot['rateLimits']
-): boolean {
-  const localById = new Map(localRateLimits.map((windowState) => [windowState.id, windowState]))
-  return (
-    officialRateLimits.length > 0 &&
-    officialRateLimits.length === localRateLimits.length &&
-    officialRateLimits.every((officialWindow) => {
-      const localWindow = localById.get(officialWindow.id)
-      return (
-        officialWindow.usedPercent !== undefined &&
-        localWindow?.usedPercent !== undefined &&
-        officialWindow.usedPercent < localWindow.usedPercent
-      )
-    })
-  )
+export function selectCachedSnapshot(
+  cached: { key: string; snapshot: UsageSnapshot } | undefined,
+  key: string,
+  now = Date.now()
+): UsageSnapshot | undefined {
+  if (!cached || cached.key !== key || !cached.snapshot.lastSuccessAt) return undefined
+  const age = now - Date.parse(cached.snapshot.lastSuccessAt)
+  return age >= 0 && age <= CACHE_MAX_AGE_MS ? cached.snapshot : undefined
 }
 
 function buildOfficialHeaders(credentials: {
   accessToken: string
-  accountId?: string
+  accountId: string
 }): Record<string, string> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${credentials.accessToken}`,
     'User-Agent': 'codex-cli',
-    Accept: 'application/json'
+    Accept: 'application/json',
+    'Cache-Control': 'no-cache'
   }
 
   if (credentials.accountId) {
@@ -209,8 +177,7 @@ export function areOfficialDispatchResetAtsStable(
   return (
     keys.length === Object.keys(right).length &&
     keys.every(
-      (key) =>
-        right[key] !== undefined && Math.abs(left[key] - right[key]) <= toleranceSeconds
+      (key) => right[key] !== undefined && Math.abs(left[key] - right[key]) <= toleranceSeconds
     )
   )
 }
@@ -237,35 +204,73 @@ export async function fetchOfficialDispatchResetAts(): Promise<
   }
 }
 
-async function readOfficialCodexCredentials(): Promise<CredentialLookup> {
+export async function readOfficialCodexCredentials(): Promise<CredentialLookup> {
   const authPath = resolveCodexAuthPath()
 
   try {
     const content = await fs.readFile(authPath, 'utf8')
-    const auth = parseJsonObject(content)
-    if (!auth) {
-      return { canRefresh: false, issue: 'Codex auth.json 不是有效 JSON' }
-    }
+    return parseCodexCredentials(JSON.parse(content))
+  } catch {
+    return { canRefresh: true, issue: '无法读取 Codex auth.json,请检查登录状态和凭据路径' }
+  }
+}
 
-    if (getString(auth.auth_mode ?? auth.authMode) !== 'chatgpt') {
-      return { canRefresh: false, issue: 'Codex 当前不是 ChatGPT OAuth 模式' }
-    }
-
-    const tokens = getRecord(auth.tokens)
-    const accessToken = getString(tokens?.access_token ?? tokens?.accessToken)
-    if (!accessToken) {
-      return { canRefresh: false, issue: 'Codex auth.json 缺少 access_token' }
-    }
-
-    return {
-      canRefresh: true,
-      credentials: {
-        accessToken,
-        accountId: getString(tokens?.account_id ?? tokens?.accountId)
+export function parseCodexCredentials(value: unknown): CredentialLookup {
+  const auth = getRecord(value)
+  const mode = getString(auth?.auth_mode ?? auth?.authMode)
+  const tokens = getRecord(auth?.tokens)
+  const accessToken = getString(tokens?.access_token ?? tokens?.accessToken)
+  if ((mode && mode !== 'chatgpt') || (!mode && getString(auth?.OPENAI_API_KEY))) {
+    return { canRefresh: true, issue: '当前不是 ChatGPT 登录,无法监测订阅额度' }
+  }
+  if (!accessToken) return { canRefresh: true, issue: '缺少 ChatGPT 凭据,请在 Codex 中登录' }
+  const claims = decodeClaims(accessToken)
+  const idClaims = decodeClaims(getString(tokens?.id_token ?? tokens?.idToken))
+  const accessAuth = getRecord(claims?.['https://api.openai.com/auth'])
+  const idAuth = getRecord(idClaims?.['https://api.openai.com/auth'])
+  const accountId =
+    getString(tokens?.account_id ?? tokens?.accountId) ??
+    getString(accessAuth?.chatgpt_account_id) ??
+    getString(idAuth?.chatgpt_account_id)
+  if (!accountId) return { canRefresh: true, issue: '缺少账号标识,请重新登录 Codex 后刷新' }
+  const tokenAccountId = getString(accessAuth?.chatgpt_account_id)
+  if (tokenAccountId && tokenAccountId !== accountId) {
+    return { canRefresh: true, issue: '账号标识与登录令牌不一致,请重新登录 Codex' }
+  }
+  // JWT 仅用于本地标注和缓存隔离,凭据有效性仍由官方接口鉴权确认。
+  const subject =
+    getString(accessAuth?.chatgpt_user_id) ??
+    getString(claims?.sub) ??
+    getString(idAuth?.chatgpt_user_id) ??
+    getString(idClaims?.sub) ??
+    accessToken
+  const profile = getRecord(claims?.['https://api.openai.com/profile'])
+  const email = getString(profile?.email) ?? getString(idClaims?.email)
+  return {
+    canRefresh: true,
+    credentials: {
+      accessToken,
+      accountId,
+      key: createHash('sha256')
+        .update(JSON.stringify([accountId, subject]))
+        .digest('hex'),
+      account: {
+        label:
+          email?.replace(/^(.{1,2})[^@]*(@.*)$/, '$1***$2') ?? `ChatGPT · …${accountId.slice(-6)}`,
+        workspace: `…${accountId.slice(-6)}`
       }
     }
+  }
+}
+
+function decodeClaims(token: string | undefined): Record<string, unknown> | undefined {
+  try {
+    const payload = token?.split('.')[1]
+    return payload
+      ? getRecord(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')))
+      : undefined
   } catch {
-    return { canRefresh: false, issue: '未找到 ~/.codex/auth.json' }
+    return undefined
   }
 }
 
@@ -281,13 +286,15 @@ function requestJson(
       response.on('data', (chunk: Buffer) => {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
       })
+      response.on('error', reject)
+      response.on('aborted', () => reject(new Error('官方额度连接中断')))
 
       response.on('end', () => {
         const statusCode = response.statusCode ?? 0
         const body = Buffer.concat(chunks).toString('utf8')
 
         if (statusCode === 401 || statusCode === 403) {
-          reject(new Error(`官方额度接口鉴权失败 HTTP ${statusCode}`))
+          reject(new Error(`登录已失效或无访问权限 HTTP ${statusCode},请在 Codex 中重新登录`))
           return
         }
 
@@ -304,9 +311,13 @@ function requestJson(
       })
     })
 
-    request.setTimeout(Math.max(1000, timeoutMs), () => {
-      request.destroy(new Error('官方额度接口请求超时'))
-    })
+    const timeout = setTimeout(
+      () => {
+        request.destroy(new Error('官方额度接口请求超时'))
+      },
+      Math.max(1000, timeoutMs)
+    )
+    request.on('close', () => clearTimeout(timeout))
     request.on('error', reject)
     request.end()
   })
@@ -322,10 +333,23 @@ export function parseOfficialRateLimits(
     return undefined
   }
 
-  const windows = getOfficialWindowEntries(rateLimit)
-    .map(([id, record]) => createOfficialRateLimitWindow(id, record, observedAt))
-    .filter((windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined)
-  return windows.length > 0 ? windows : undefined
+  if (
+    Object.entries(rateLimit).some(
+      ([key, value]) =>
+        (key.endsWith('_window') || key.endsWith('Window')) && value != null && !getRecord(value)
+    )
+  )
+    return undefined
+
+  const windows = getOfficialWindowEntries(rateLimit).map(([id, record]) =>
+    createOfficialRateLimitWindow(id, record, observedAt)
+  )
+  if (windows.some((window) => !window)) return undefined
+  return (windows as RateLimitWindowSnapshot[]).sort(
+    (left, right) =>
+      (left.windowMinutes ?? Infinity) - (right.windowMinutes ?? Infinity) ||
+      left.id.localeCompare(right.id)
+  )
 }
 
 function createOfficialRateLimitWindow(
@@ -345,7 +369,7 @@ function createOfficialRateLimitWindow(
     record.reset_at ?? record.resetAt ?? record.resets_at ?? record.resetsAt
   )
 
-  if (usedPercent === undefined && resetsAtMs === undefined) {
+  if (usedPercent === undefined || usedPercent > 100) {
     return undefined
   }
 
@@ -354,7 +378,8 @@ function createOfficialRateLimitWindow(
     {
       windowMinutes: limitWindowSeconds !== undefined ? limitWindowSeconds / 60 : undefined,
       usedPercent,
-      resetsAtMs
+      resetsAtMs,
+      resetsInSeconds: getNonNegativeNumber(record.reset_after_seconds ?? record.resetAfterSeconds)
     },
     observedAt
   )
@@ -369,18 +394,6 @@ function resolveCodexConfigDir(): string {
   return codexHome ? path.resolve(expandHome(codexHome)) : path.join(os.homedir(), '.codex')
 }
 
-function resolveSessionPaths(): string[] {
-  const paths: string[] = []
-  const codexHome = process.env.CODEX_HOME?.trim()
-
-  if (codexHome) {
-    paths.push(path.join(path.resolve(expandHome(codexHome)), SESSION_SUBDIR))
-  }
-
-  paths.push(path.join(os.homedir(), '.codex', SESSION_SUBDIR))
-  return Array.from(new Set(paths))
-}
-
 function expandHome(value: string): string {
   if (value === '~') {
     return os.homedir()
@@ -391,155 +404,20 @@ function expandHome(value: string): string {
   return value
 }
 
-async function collectJsonlFiles(root: string, maxEntries: number): Promise<JsonlFileEntry[]> {
-  const entries: JsonlFileEntry[] = []
-  await collectJsonlFilesInto(root, entries, maxEntries)
-  return entries
-}
-
-async function collectJsonlFilesInto(
-  root: string,
-  entries: JsonlFileEntry[],
-  maxEntries: number
-): Promise<void> {
-  if (entries.length >= maxEntries) {
-    return
-  }
-
-  let dirents: Dirent[]
-  try {
-    dirents = await fs.readdir(root, { withFileTypes: true })
-  } catch {
-    return
-  }
-
-  const sortedDirents = dirents.sort((left, right) => {
-    const leftDir = left.isDirectory() ? 1 : 0
-    const rightDir = right.isDirectory() ? 1 : 0
-    if (leftDir !== rightDir) {
-      return rightDir - leftDir
-    }
-    return right.name.localeCompare(left.name)
-  })
-
-  for (const dirent of sortedDirents) {
-    if (entries.length >= maxEntries) {
-      return
-    }
-
-    const fullPath = path.join(root, dirent.name)
-    if (dirent.isDirectory()) {
-      await collectJsonlFilesInto(fullPath, entries, maxEntries)
-      continue
-    }
-
-    if (!dirent.isFile() || !dirent.name.endsWith('.jsonl')) {
-      continue
-    }
-
-    try {
-      const stat = await fs.stat(fullPath)
-      entries.push({ filePath: fullPath, mtimeMs: stat.mtimeMs })
-    } catch {
-      continue
-    }
-  }
-}
-
-async function readLatestRateLimitSnapshot(
-  filePath: string
-): Promise<RateLimitSnapshot | undefined> {
-  try {
-    const content = await fs.readFile(filePath, 'utf8')
-    const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0)
-    let latestSnapshot: RateLimitSnapshot | undefined
-
-    for (const rawLine of lines) {
-      const parsed = parseJsonObject(rawLine)
-      if (!parsed) {
-        continue
-      }
-
-      const entryType = getString(parsed.type)
-      const payload = getRecord(parsed.payload)
-      if (entryType !== 'event_msg' || !payload || getString(payload.type) !== 'token_count') {
-        continue
-      }
-
-      const rateLimits = getRecord(payload.rate_limits)
-      const timestamp = parseTimestamp(parsed)
-      if (!rateLimits || !timestamp) {
-        continue
-      }
-
-      latestSnapshot = {
-        timestamp,
-        primary: normalizeRateLimit(getRecord(rateLimits.primary)),
-        secondary: normalizeRateLimit(getRecord(rateLimits.secondary))
-      }
-    }
-
-    return latestSnapshot
-  } catch {
-    return undefined
-  }
-}
-
-function normalizeRateLimit(record: Record<string, unknown> | undefined): RawRateLimit | undefined {
-  if (!record) {
-    return undefined
-  }
-
-  const windowMinutes = getNonNegativeNumber(record.window_minutes ?? record.windowMinutes)
-  const usedPercent = getNonNegativeNumber(record.used_percent ?? record.usedPercent)
-  const resetsInSeconds = getNonNegativeNumber(
-    record.resets_in_seconds ?? record.reset_in_seconds ?? record.resetsInSeconds
-  )
-  const resetsAtMs = normalizeEpochMs(
-    record.resets_at ?? record.reset_at ?? record.resetsAt ?? record.resetAt
-  )
-
-  if (
-    windowMinutes === undefined &&
-    usedPercent === undefined &&
-    resetsInSeconds === undefined &&
-    resetsAtMs === undefined
-  ) {
-    return undefined
-  }
-
-  return { windowMinutes, usedPercent, resetsInSeconds, resetsAtMs }
-}
-
-function toRateLimits(snapshot: RateLimitSnapshot | undefined): UsageSnapshot['rateLimits'] {
-  if (!snapshot) {
-    return []
-  }
-
-  return [
-    snapshot.primary
-      ? createRateLimitWindow('primary', snapshot.primary, snapshot.timestamp)
-      : undefined,
-    snapshot.secondary
-      ? createRateLimitWindow('secondary', snapshot.secondary, snapshot.timestamp)
-      : undefined
-  ].filter((windowState): windowState is RateLimitWindowSnapshot => windowState !== undefined)
-}
-
 function createRateLimitWindow(
   id: string,
   raw: RawRateLimit,
   snapshotTime: Date
 ): RateLimitWindowSnapshot {
-  const now = Date.now()
-  const resetsAt =
+  const now = snapshotTime.getTime()
+  const resetDate =
     raw.resetsAtMs !== undefined
       ? new Date(raw.resetsAtMs)
       : raw.resetsInSeconds !== undefined
         ? new Date(snapshotTime.getTime() + raw.resetsInSeconds * 1000)
         : undefined
-  const hasExpired = resetsAt !== undefined && resetsAt.getTime() <= now
-  const usedPercent = hasExpired ? 0 : clampPercent(raw.usedPercent)
+  const resetsAt = resetDate && Number.isFinite(resetDate.getTime()) ? resetDate : undefined
+  const usedPercent = clampPercent(raw.usedPercent)
   const remainingPercent = usedPercent === undefined ? undefined : clampPercent(100 - usedPercent)
   const resetsInSeconds =
     resetsAt === undefined ? undefined : Math.max(0, Math.floor((resetsAt.getTime() - now) / 1000))
@@ -556,48 +434,17 @@ function createRateLimitWindow(
   }
 }
 
-function resolveWindowLabel(
-  id: string,
-  windowMinutes: number | undefined
-): string {
+function resolveWindowLabel(id: string, windowMinutes: number | undefined): string {
   if (windowMinutes === undefined) {
     return id
   }
   if (windowMinutes >= 1440) {
-    return `${Math.round(windowMinutes / 1440)}d`
+    return `${windowMinutes / 1440}d`
   }
   if (windowMinutes >= 60) {
-    return `${Math.round(windowMinutes / 60)}h`
+    return `${windowMinutes / 60}h`
   }
-  return `${Math.round(windowMinutes)}m`
-}
-
-function resolveSourceHost(rateLimitSource: RateLimitSource): string {
-  if (rateLimitSource === 'official') {
-    return 'chatgpt.com'
-  }
-  if (rateLimitSource === 'local') {
-    return 'sessions JSONL'
-  }
-  return 'No data'
-}
-
-function parseJsonObject(value: string): Record<string, unknown> | undefined {
-  try {
-    return getRecord(JSON.parse(value))
-  } catch {
-    return undefined
-  }
-}
-
-function parseTimestamp(record: Record<string, unknown>): Date | undefined {
-  const value = getString(record.timestamp ?? record.time ?? record.created_at ?? record.createdAt)
-  if (!value) {
-    return undefined
-  }
-
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed
+  return `${windowMinutes}m`
 }
 
 function normalizeEpochMs(value: unknown): number | undefined {
@@ -606,7 +453,8 @@ function normalizeEpochMs(value: unknown): number | undefined {
     return undefined
   }
 
-  return raw >= 1_000_000_000_000 ? raw : raw * 1000
+  const ms = raw >= 1_000_000_000_000 ? raw : raw * 1000
+  return Number.isFinite(new Date(ms).getTime()) ? ms : undefined
 }
 
 function clampPercent(value: number | undefined): number | undefined {
@@ -615,10 +463,6 @@ function clampPercent(value: number | undefined): number | undefined {
   }
 
   return Math.max(0, Math.min(100, value))
-}
-
-function hasRateLimits(rateLimits: UsageSnapshot['rateLimits']): boolean {
-  return rateLimits.length > 0
 }
 
 function getOfficialWindowEntries(
@@ -650,17 +494,8 @@ function getNonNegativeNumber(value: unknown): number | undefined {
     return value >= 0 ? value : undefined
   }
   if (typeof value === 'string') {
-    const parsed = Number.parseFloat(value)
+    const parsed = value.trim() ? Number(value) : NaN
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
   }
   return undefined
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.access(target)
-    return true
-  } catch {
-    return false
-  }
 }

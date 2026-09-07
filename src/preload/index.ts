@@ -15,6 +15,7 @@ const CHANNELS = {
   refresh: 'codex-status:refresh',
   updateSettings: 'codex-status:update-settings',
   closePanel: 'codex-status:close-panel',
+  openPanel: 'codex-status:open-panel',
   moveCapsuleWindow: 'codex-status:move-capsule-window',
   finishCapsuleWindowDrag: 'codex-status:finish-capsule-window-drag',
   snapshotUpdated: 'codex-status:snapshot-updated',
@@ -28,13 +29,14 @@ const api: CodexStatusApi = {
   updateSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.invoke(CHANNELS.updateSettings, patch) as Promise<PreferencesPayload>,
   closePanel: () => ipcRenderer.invoke(CHANNELS.closePanel) as Promise<void>,
+  openPanel: () => ipcRenderer.invoke(CHANNELS.openPanel) as Promise<void>,
   moveCapsuleWindow: (payload: CapsuleDragMovePayload) =>
     ipcRenderer.invoke(CHANNELS.moveCapsuleWindow, payload) as Promise<WindowPreferences>,
   finishCapsuleWindowDrag: () =>
     ipcRenderer.invoke(CHANNELS.finishCapsuleWindowDrag) as Promise<WindowPreferences>,
-  onSnapshotUpdated: listener => subscribe(CHANNELS.snapshotUpdated, listener),
-  onPreferencesUpdated: listener => subscribe(CHANNELS.preferencesUpdated, listener),
-  onCommand: listener => subscribe(CHANNELS.command, listener)
+  onSnapshotUpdated: (listener) => subscribe(CHANNELS.snapshotUpdated, listener),
+  onPreferencesUpdated: (listener) => subscribe(CHANNELS.preferencesUpdated, listener),
+  onCommand: (listener) => subscribe(CHANNELS.command, listener)
 }
 
 if (process.contextIsolated) {

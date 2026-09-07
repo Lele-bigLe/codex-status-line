@@ -1,7 +1,7 @@
 export type PercentageMode = 'remaining' | 'used'
 export type RefreshMode = 'auto' | 'manual'
 export type LocaleCode = 'zh-CN' | 'en-US'
-export type RateLimitSource = 'official' | 'local' | 'none'
+export type RateLimitSource = 'official' | 'cache' | 'none'
 export type PanelView = 'details' | 'settings'
 export type RendererWindowRole = 'capsule' | 'panel'
 export type CapsuleViewMode = 'capsule' | 'orb'
@@ -24,13 +24,14 @@ export interface UsageSnapshot {
   isRefreshing: boolean
   canRefresh: boolean
   generatedAt?: string
+  lastSuccessAt?: string
+  account?: { label: string; workspace: string }
+  authPath?: string
   rateLimits: RateLimitWindowSnapshot[]
   rateLimitSource: RateLimitSource
   sourceHost: string
   issues: string[]
   officialIssue?: string
-  filesScanned: number
-  sessionsPath?: string
 }
 
 export interface AppSettings {
@@ -91,6 +92,7 @@ export interface CodexStatusApi {
   refreshStatus: () => Promise<UsageSnapshot>
   updateSettings: (patch: Partial<AppSettings>) => Promise<PreferencesPayload>
   closePanel: () => Promise<void>
+  openPanel: () => Promise<void>
   moveCapsuleWindow: (payload: CapsuleDragMovePayload) => Promise<WindowPreferences>
   finishCapsuleWindowDrag: () => Promise<WindowPreferences>
   onSnapshotUpdated: (listener: (snapshot: UsageSnapshot) => void) => () => void
@@ -103,13 +105,13 @@ export const DEFAULT_REFRESH_INTERVAL_SECONDS = 30
 export const MIN_REFRESH_INTERVAL_SECONDS = 5
 export const MAX_REFRESH_INTERVAL_SECONDS = 600
 export const CAPSULE_WINDOW_SIZE = {
-  width: 250,
-  height: 50
+  width: 288,
+  height: 62
 } as const
 
 export const ORB_WINDOW_SIZE = {
   width: 60,
-  height: 165
+  height: 180
 } as const
 
 export const CAPSULE_EDGE_GAP = 0
@@ -144,8 +146,7 @@ export function createEmptySnapshot(): UsageSnapshot {
     rateLimits: [],
     rateLimitSource: 'none',
     sourceHost: 'No data',
-    issues: [],
-    filesScanned: 0
+    issues: []
   }
 }
 

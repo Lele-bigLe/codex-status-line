@@ -7,6 +7,7 @@ import {
   MIN_REFRESH_INTERVAL_SECONDS,
   createEmptySnapshot,
   type AppSettings,
+  type CapsuleDragMovePayload,
   type LocaleCode,
   type PanelView,
   type PercentageMode,
@@ -55,18 +56,31 @@ const COPY = {
     manual: '手动',
     enabled: '开启',
     disabled: '关闭',
-    remaining: '未使用',
+    remaining: '剩余',
     used: '已使用',
     officialSource: '官方接口',
-    localSource: '本地 JSONL',
+    cacheSource: '历史数据',
     emptySource: '无数据',
-    fallbackTitle: '当前使用回退数据',
-    fallbackBody: '官方额度接口暂不可用，当前展示最近一次本地会话中的额度状态。',
+    fallbackTitle: '同步暂不可用',
+    fallbackBody: '保留此账号最近一次官方结果，仅供参考；自动刷新开启时会继续重试。',
     unavailableTitle: '暂无可用额度数据',
-    unavailableBody: '官方接口和本地 sessions 都没有提供可用窗口。',
-    scannedFiles: '已扫描',
-    filesUnit: '个 jsonl',
-    path: 'sessions 路径',
+    unavailableBody: '请确认 Codex 已登录，下方可查看凭据路径和同步原因。',
+    path: '凭据路径',
+    overview: '额度概览',
+    account: '监测账号',
+    unknownAccount: '尚未识别账号',
+    workspace: '工作区',
+    syncing: '同步中',
+    synced: '已同步',
+    stale: '历史数据',
+    disconnected: '未连接',
+    diagnostics: '连接信息',
+    lastSuccess: '数据更新于',
+    noWindow: '当前未返回额度窗口',
+    noWindowBody: '官方请求已成功，窗口将按实际返回展示。',
+    capsuleHint: '点击刷新 · 拖动移动 · 箭头查看详情',
+    pendingReset: '等待重置确认',
+    saveError: '设置未保存，请重试',
     today: '今天',
     yesterday: '昨天'
   },
@@ -98,15 +112,30 @@ const COPY = {
     remaining: 'Remaining',
     used: 'Used',
     officialSource: 'Official API',
-    localSource: 'Local JSONL',
+    cacheSource: 'Saved data',
     emptySource: 'No data',
-    fallbackTitle: 'Using fallback data',
-    fallbackBody: 'Live quota lookup is unavailable. Showing the latest usable local status.',
+    fallbackTitle: 'Sync unavailable',
+    fallbackBody:
+      'Showing this account’s last official result for reference. Auto refresh will keep retrying.',
     unavailableTitle: 'Quota data unavailable',
-    unavailableBody: 'Neither the official endpoint nor local sessions returned a usable window.',
-    scannedFiles: 'Scanned',
-    filesUnit: 'jsonl files',
-    path: 'Sessions path',
+    unavailableBody:
+      'Check that Codex is signed in. Connection details below show the credential path and sync issue.',
+    path: 'Credential path',
+    overview: 'Quota overview',
+    account: 'Monitoring account',
+    unknownAccount: 'Account not identified',
+    workspace: 'Workspace',
+    syncing: 'Syncing',
+    synced: 'Synced',
+    stale: 'Saved data',
+    disconnected: 'Disconnected',
+    diagnostics: 'Connection details',
+    lastSuccess: 'Data updated',
+    noWindow: 'No quota windows returned',
+    noWindowBody: 'The request succeeded. Windows follow the official response.',
+    capsuleHint: 'Click to refresh · Drag to move · Arrow for details',
+    pendingReset: 'Awaiting reset confirmation',
+    saveError: 'Settings were not saved. Please retry.',
     today: 'Today',
     yesterday: 'Yesterday'
   }
@@ -126,7 +155,13 @@ function App(): React.JSX.Element {
   const [capsulePointerActive, setCapsulePointerActive] = useState(false)
   const [manualRefreshActive, setManualRefreshActive] = useState(false)
   const [ready, setReady] = useState(false)
+  const [now, setNow] = useState(Date.now)
+  const [settingsIssue, setSettingsIssue] = useState(false)
   const capsulePointerRef = useRef<CapsulePointerState | null>(null)
+  const dragFrameRef = useRef<number | undefined>(undefined)
+  const pendingDragRef = useRef<CapsuleDragMovePayload | undefined>(undefined)
+  const dragRequestRef = useRef<Promise<void> | undefined>(undefined)
+  const dragFinishingRef = useRef(false)
   const manualRefreshTimerRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
@@ -179,12 +214,27 @@ function App(): React.JSX.Element {
 
     return () => {
       active = false
+      if (dragFrameRef.current !== undefined) window.cancelAnimationFrame(dragFrameRef.current)
+      dragFrameRef.current = undefined
+      pendingDragRef.current = undefined
       if (manualRefreshTimerRef.current !== undefined) {
         window.clearTimeout(manualRefreshTimerRef.current)
       }
       disposeSnapshot()
       disposePreferences()
       disposeCommand()
+    }
+  }, [])
+
+  useEffect(() => {
+    const updateClock = (): void => {
+      if (!document.hidden) setNow(Date.now())
+    }
+    const timer = window.setInterval(updateClock, 15000)
+    document.addEventListener('visibilitychange', updateClock)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', updateClock)
     }
   }, [])
 
@@ -201,12 +251,27 @@ function App(): React.JSX.Element {
   const sourceLabel =
     snapshot.rateLimitSource === 'official'
       ? copy.officialSource
-      : snapshot.rateLimitSource === 'local'
-        ? copy.localSource
+      : snapshot.rateLimitSource === 'cache'
+        ? copy.cacheSource
         : copy.emptySource
-  const sourceValue = snapshot.rateLimitSource === 'none' ? copy.noData : snapshot.sourceHost
+  const sourceValue = snapshot.sourceHost
+  const isStale =
+    snapshot.rateLimitSource === 'cache' ||
+    Boolean(
+      snapshot.lastSuccessAt &&
+      (now - Date.parse(snapshot.lastSuccessAt) >
+        Math.max(90000, settings.refreshIntervalSeconds * 2000) ||
+        snapshot.rateLimits.some((window) => window.resetsAt && Date.parse(window.resetsAt) <= now))
+    )
+  const statusLabel = snapshot.isRefreshing
+    ? copy.syncing
+    : isStale
+      ? copy.stale
+      : snapshot.rateLimitSource === 'official'
+        ? copy.synced
+        : copy.disconnected
   const fallbackBanner =
-    snapshot.rateLimitSource === 'local' && snapshot.officialIssue
+    snapshot.rateLimitSource === 'cache' && snapshot.officialIssue
       ? {
           title: copy.fallbackTitle,
           body: copy.fallbackBody
@@ -219,11 +284,16 @@ function App(): React.JSX.Element {
         : undefined
   const rateLimitWindows = snapshot.rateLimits
   const rateLimitCount = rateLimitWindows.length
-  const displayedRateLimit = rateLimitWindows[0]
-  const capsuleDisplayPercent =
-    settings.percentageMode === 'used'
-      ? displayedRateLimit?.usedPercent
-      : displayedRateLimit?.remainingPercent
+  const percentages = rateLimitWindows
+    .map((window) =>
+      settings.percentageMode === 'used' ? window.usedPercent : window.remainingPercent
+    )
+    .filter((value): value is number => value !== undefined)
+  const capsuleDisplayPercent = percentages.length
+    ? settings.percentageMode === 'used'
+      ? Math.max(...percentages)
+      : Math.min(...percentages)
+    : undefined
   const capsuleTone = resolveMetricTone(capsuleDisplayPercent, settings.percentageMode)
   const capsuleViewMode = windowPreferences.viewMode
   const capsuleClassName = [
@@ -233,35 +303,11 @@ function App(): React.JSX.Element {
     snapshot.isRefreshing ? 'is-refreshing' : '',
     manualRefreshActive ? 'is-manual-refreshing' : '',
     canRefresh ? '' : 'is-static',
+    isStale ? 'is-stale' : '',
     capsulePointerActive ? 'is-dragging' : ''
   ]
     .filter(Boolean)
     .join(' ')
-
-  const detailRows: Array<React.ComponentProps<typeof DetailRow>> = [
-    {
-      icon: <ServerIcon />,
-      label: copy.source,
-      value: sourceValue,
-      badge: snapshot.rateLimitSource === 'none' ? undefined : sourceLabel
-    },
-    ...rateLimitWindows.map((windowState) => ({
-      icon:
-        windowState.windowMinutes !== undefined && windowState.windowMinutes < 1440 ? (
-          <ClockIcon />
-        ) : (
-          <CalendarIcon />
-        ),
-      label: `${windowState.label} ${copy.reset}`,
-      value: formatAbsoluteDate(windowState.resetsAt, settings.locale)
-    })),
-    {
-      icon: <HistoryIcon />,
-      label: copy.lastRefresh,
-      value: formatAbsoluteDate(snapshot.generatedAt, settings.locale),
-      hint: formatRelativeDate(snapshot.generatedAt, settings.locale)
-    }
-  ]
 
   function openDetails(): void {
     setPanelView('details')
@@ -277,15 +323,14 @@ function App(): React.JSX.Element {
   }
 
   async function handleRefresh(): Promise<void> {
-    if (!canRefresh) {
+    if (!canRefresh || snapshot.isRefreshing) {
       return
     }
 
     showManualRefreshFeedback()
 
     try {
-      const nextSnapshot = await window.codexStatus.refreshStatus()
-      setSnapshot(nextSnapshot)
+      await window.codexStatus.refreshStatus()
     } catch (error) {
       recordSnapshotIssue(error)
     }
@@ -304,7 +349,7 @@ function App(): React.JSX.Element {
   }
 
   function handleCapsulePointerDown(event: React.PointerEvent<HTMLElement>): void {
-    if (event.button !== 0) {
+    if (event.button !== 0 || dragFinishingRef.current || capsulePointerRef.current) {
       return
     }
 
@@ -338,17 +383,32 @@ function App(): React.JSX.Element {
     pointerState.hasDragged = true
     event.preventDefault()
 
-    void window.codexStatus
-      .moveCapsuleWindow({
-        screenX: event.screenX,
-        screenY: event.screenY,
-        offsetX: pointerState.offsetX,
-        offsetY: pointerState.offsetY
-      })
-      .then((nextWindowPreferences) => {
-        setWindowPreferences(nextWindowPreferences)
-      })
-      .catch(recordSnapshotIssue)
+    pendingDragRef.current = {
+      screenX: event.screenX,
+      screenY: event.screenY,
+      offsetX: pointerState.offsetX,
+      offsetY: pointerState.offsetY
+    }
+    scheduleDragMove()
+  }
+
+  function scheduleDragMove(): void {
+    if (dragFrameRef.current !== undefined || dragRequestRef.current) return
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = undefined
+      const payload = pendingDragRef.current
+      pendingDragRef.current = undefined
+      if (!payload) return
+      // 每帧只发最新位置,且最多一个在途请求;移动坐标无需驱动 React 渲染。
+      dragRequestRef.current = window.codexStatus
+        .moveCapsuleWindow(payload)
+        .then(() => undefined)
+        .catch(recordSnapshotIssue)
+        .finally(() => {
+          dragRequestRef.current = undefined
+          if (pendingDragRef.current && !dragFinishingRef.current) scheduleDragMove()
+        })
+    })
   }
 
   function handleCapsulePointerUp(event: React.PointerEvent<HTMLElement>): void {
@@ -376,11 +436,28 @@ function App(): React.JSX.Element {
     setCapsulePointerActive(false)
 
     if (pointerState.hasDragged) {
+      dragFinishingRef.current = true
+      if (dragFrameRef.current !== undefined) window.cancelAnimationFrame(dragFrameRef.current)
+      dragFrameRef.current = undefined
+      if (shouldRefreshOnClick) {
+        pendingDragRef.current = {
+          screenX: event.screenX,
+          screenY: event.screenY,
+          offsetX: pointerState.offsetX,
+          offsetY: pointerState.offsetY
+        }
+      }
       try {
+        await dragRequestRef.current
+        const payload = pendingDragRef.current
+        pendingDragRef.current = undefined
+        if (payload) await window.codexStatus.moveCapsuleWindow(payload).catch(recordSnapshotIssue)
         const nextWindowPreferences = await window.codexStatus.finishCapsuleWindowDrag()
         setWindowPreferences(nextWindowPreferences)
       } catch (error) {
         recordSnapshotIssue(error)
+      } finally {
+        dragFinishingRef.current = false
       }
       return
     }
@@ -413,6 +490,7 @@ function App(): React.JSX.Element {
   }
 
   async function handleSettingsPatch(patch: Partial<AppSettings>): Promise<void> {
+    setSettingsIssue(false)
     const previousSettings = settings
     setSettings({
       ...settings,
@@ -424,6 +502,7 @@ function App(): React.JSX.Element {
       setSettings(payload.settings)
     } catch {
       setSettings(previousSettings)
+      setSettingsIssue(true)
     }
   }
 
@@ -475,9 +554,11 @@ function App(): React.JSX.Element {
   if (windowRole === 'capsule') {
     return (
       <div className="app-shell app-shell--capsule">
-        <main className="widget">
+        <main className={`widget widget--${capsuleViewMode}`}>
           <section
-            aria-label={canRefresh ? copy.refresh : sourceValue}
+            aria-label={`${statusLabel}. ${settings.percentageMode === 'used' ? copy.used : copy.remaining}. ${rateLimitWindows.map((window) => `${window.label} ${(settings.percentageMode === 'used' ? window.usedPercent : window.remainingPercent) ?? '--'}%`).join(', ')}. ${copy.refresh}`}
+            aria-busy={snapshot.isRefreshing}
+            title={`${snapshot.account?.label ?? copy.unknownAccount} · ${statusLabel}\n${settings.percentageMode === 'used' ? copy.used : copy.remaining}\n${copy.capsuleHint}`}
             className={capsuleClassName}
             onKeyDown={handleCapsuleKeyDown}
             onPointerCancel={handleCapsulePointerCancel}
@@ -487,7 +568,15 @@ function App(): React.JSX.Element {
             role={canRefresh ? 'button' : undefined}
             tabIndex={canRefresh ? 0 : -1}
           >
-            {capsuleViewMode === 'orb' ? (
+            <span className="capsule__status" aria-hidden="true">
+              {isStale ? '!' : snapshot.isRefreshing ? '…' : '·'}
+            </span>
+            {rateLimitCount === 0 ? (
+              <div className="capsule__empty">
+                <strong>Codex</strong>
+                <span>{snapshot.isRefreshing ? copy.syncing : copy.noData}</span>
+              </div>
+            ) : capsuleViewMode === 'orb' ? (
               <div
                 className={`capsule__edge-metrics${rateLimitCount === 1 ? ' capsule__edge-metrics--single' : ''}`}
                 style={
@@ -528,6 +617,17 @@ function App(): React.JSX.Element {
               </div>
             )}
           </section>
+          <button
+            className="capsule__details"
+            type="button"
+            aria-label={copy.details}
+            title={copy.details}
+            onClick={() => {
+              void window.codexStatus.openPanel().catch(recordSnapshotIssue)
+            }}
+          >
+            <ChevronRightIcon />
+          </button>
         </main>
       </div>
     )
@@ -536,43 +636,86 @@ function App(): React.JSX.Element {
   return (
     <div className="app-shell app-shell--panel">
       <section className={`panel panel--${panelView}`}>
-        <div aria-hidden="true" className="panel__grabber">
-          <span />
-        </div>
+        <header className="panel__topbar">
+          <span className="panel__brand">
+            CODEX <span>STATUS</span>
+          </span>
+          <button
+            className="icon-button"
+            onClick={closePanel}
+            type="button"
+            aria-label={copy.close}
+          >
+            <CloseIcon />
+          </button>
+        </header>
+        <nav className="panel__nav" aria-label={copy.details}>
+          <button type="button" aria-pressed={panelView === 'details'} onClick={openDetails}>
+            {copy.overview}
+          </button>
+          <button type="button" aria-pressed={panelView === 'settings'} onClick={openSettings}>
+            {copy.settings}
+          </button>
+        </nav>
         {panelView === 'details' ? (
           <div className="panel__body panel__body--details">
             <div className="panel__content">
               <div className="panel__header panel__header--details">
                 <div>
-                  <p className="panel__eyebrow">{sourceLabel}</p>
-                  <h2 className="panel__title">{copy.details}</h2>
+                  <p className="panel__eyebrow">{copy.account}</p>
+                  <h2 className="panel__account" title={snapshot.account?.label}>
+                    {snapshot.account?.label ?? copy.unknownAccount}
+                  </h2>
+                  {snapshot.account ? (
+                    <p className="panel__workspace">
+                      {copy.workspace} {snapshot.account.workspace}
+                    </p>
+                  ) : null}
                 </div>
+                <span
+                  className={`sync-status ${isStale || snapshot.rateLimitSource === 'none' ? 'sync-status--warning' : ''}`}
+                  role="status"
+                >
+                  {statusLabel}
+                </span>
               </div>
 
-              <div className={`quota-grid${rateLimitCount === 1 ? ' quota-grid--single' : ''}`}>
-                {rateLimitWindows.map((windowState) => (
-                  <QuotaCard
-                    key={windowState.id}
-                    locale={settings.locale}
-                    modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
-                    percentageMode={settings.percentageMode}
-                    windowState={windowState}
-                  />
-                ))}
+              <div className="quota-heading">
+                <h3>{copy.overview}</h3>
+                <span>{settings.percentageMode === 'used' ? copy.used : copy.remaining}</span>
               </div>
-
-              <div className="panel__rows">
-                {detailRows.map((row) => (
-                  <DetailRow
-                    key={row.label}
-                    badge={row.badge}
-                    hint={row.hint}
-                    icon={row.icon}
-                    label={row.label}
-                    value={row.value}
-                  />
-                ))}
-              </div>
+              {rateLimitCount > 0 ? (
+                <div
+                  className={`quota-grid${rateLimitCount === 1 ? ' quota-grid--single' : ''} ${isStale ? 'quota-grid--stale' : ''}`}
+                >
+                  {rateLimitWindows.map((windowState) => (
+                    <QuotaCard
+                      key={windowState.id}
+                      locale={settings.locale}
+                      modeLabel={settings.percentageMode === 'used' ? copy.used : copy.remaining}
+                      percentageMode={settings.percentageMode}
+                      windowState={windowState}
+                      now={now}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="quota-empty" role="status">
+                  <ClockIcon />
+                  <h3>
+                    {snapshot.isRefreshing
+                      ? copy.syncing
+                      : snapshot.rateLimitSource === 'official'
+                        ? copy.noWindow
+                        : copy.unavailableTitle}
+                  </h3>
+                  <p>
+                    {snapshot.rateLimitSource === 'official'
+                      ? copy.noWindowBody
+                      : copy.unavailableBody}
+                  </p>
+                </div>
+              )}
 
               {fallbackBanner ? (
                 <div className="fallback-card">
@@ -582,36 +725,57 @@ function App(): React.JSX.Element {
                   <div className="fallback-card__content">
                     <p className="fallback-card__title">{fallbackBanner.title}</p>
                     <p className="fallback-card__body">{fallbackBanner.body}</p>
+                    {snapshot.officialIssue ? (
+                      <p className="fallback-card__body">{snapshot.officialIssue}</p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
 
-              <div className="panel__meta">
-                <span className="panel__meta-row">
-                  <FileIcon />
-                  <span>
-                    {copy.scannedFiles} {snapshot.filesScanned} {copy.filesUnit}
-                  </span>
-                </span>
-                {snapshot.sessionsPath ? (
-                  <span className="panel__meta-row panel__meta-row--path">
-                    <FolderIcon />
-                    <span>
-                      {copy.path}: {snapshot.sessionsPath}
-                    </span>
-                  </span>
-                ) : null}
-              </div>
+              <details className="connection-details">
+                <summary>
+                  {copy.diagnostics}
+                  <span>{sourceLabel}</span>
+                </summary>
+                <dl>
+                  <div>
+                    <dt>{copy.source}</dt>
+                    <dd>{sourceValue}</dd>
+                  </div>
+                  <div>
+                    <dt>{copy.lastRefresh}</dt>
+                    <dd>{formatAbsoluteDate(snapshot.generatedAt, settings.locale)}</dd>
+                  </div>
+                  <div>
+                    <dt>{copy.path}</dt>
+                    <dd>{snapshot.authPath ?? '--'}</dd>
+                  </div>
+                </dl>
+                {snapshot.issues.map((issue) => (
+                  <p className="connection-details__issue" key={issue}>
+                    {issue}
+                  </p>
+                ))}
+              </details>
             </div>
 
             <div className="panel__footer">
-              <button className="ghost-button" onClick={openSettings} type="button">
-                <SettingsIcon />
-                <span>{copy.settings}</span>
-              </button>
-              <button className="ghost-button" onClick={closePanel} type="button">
-                <CloseIcon />
-                <span>{copy.close}</span>
+              <div className="sync-caption">
+                <span>{copy.lastSuccess}</span>
+                <strong title={formatAbsoluteDate(snapshot.lastSuccessAt, settings.locale)}>
+                  {formatRelativeDate(snapshot.lastSuccessAt, settings.locale) ?? '--'}
+                </strong>
+              </div>
+              <button
+                className="ghost-button ghost-button--accent"
+                disabled={!canRefresh || snapshot.isRefreshing}
+                onClick={() => {
+                  void handleRefresh()
+                }}
+                type="button"
+              >
+                <HistoryIcon />
+                <span>{snapshot.isRefreshing ? copy.syncing : copy.refresh}</span>
               </button>
             </div>
           </div>
@@ -620,10 +784,15 @@ function App(): React.JSX.Element {
             <div className="panel__content">
               <div className="panel__header">
                 <div>
-                  <p className="panel__eyebrow">CODEX</p>
                   <h2 className="panel__title">{copy.settings}</h2>
                 </div>
               </div>
+
+              {settingsIssue ? (
+                <p className="settings-error" role="alert">
+                  {copy.saveError}
+                </p>
+              ) : null}
 
               <div className="settings-list">
                 <div className="settings-section">
@@ -725,6 +894,7 @@ function App(): React.JSX.Element {
                     <span>{copy.launchAtLogin}</span>
                     <ToggleSwitch
                       checked={settings.launchAtLogin}
+                      label={copy.launchAtLogin}
                       offLabel={copy.disabled}
                       onChange={(checked) => {
                         void handleSettingsPatch({ launchAtLogin: checked })
@@ -821,12 +991,14 @@ function QuotaCard({
   locale,
   modeLabel,
   percentageMode,
-  windowState
+  windowState,
+  now
 }: {
   locale: LocaleCode
   modeLabel: string
   percentageMode: PercentageMode
   windowState: RateLimitWindowSnapshot
+  now: number
 }): React.JSX.Element {
   const displayPercent =
     percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
@@ -836,7 +1008,7 @@ function QuotaCard({
   return (
     <div className={`quota-card quota-card--${tone}`} style={progressStyle}>
       <div className="quota-card__head">
-        <span className="quota-card__label">{windowState.label}</span>
+        <span className="quota-card__label">{formatWindowLabel(windowState, locale)}</span>
         <span className="quota-card__mode">{modeLabel}</span>
       </div>
       <div className="quota-card__value">
@@ -846,13 +1018,20 @@ function QuotaCard({
         <span />
       </span>
       <p className="quota-card__reset">
-        {formatQuotaResetHint(windowState?.resetsInSeconds, locale)}
+        {formatQuotaResetHint(
+          windowState.resetsAt
+            ? Math.max(0, (Date.parse(windowState.resetsAt) - now) / 1000)
+            : undefined,
+          locale
+        )}
       </p>
+      <p className="quota-card__date">{formatAbsoluteDate(windowState.resetsAt, locale)}</p>
     </div>
   )
 }
 
 function formatQuotaResetHint(seconds: number | undefined, locale: LocaleCode): string {
+  if (seconds === 0) return COPY[locale].pendingReset
   const duration = formatRelativeDuration(seconds, locale, locale === 'zh-CN')
   if (!duration) {
     return '--'
@@ -861,32 +1040,16 @@ function formatQuotaResetHint(seconds: number | undefined, locale: LocaleCode): 
   return locale === 'zh-CN' ? `${duration}重置` : `resets in ${duration}`
 }
 
-function DetailRow({
-  badge,
-  icon,
-  label,
-  value,
-  hint
-}: {
-  badge?: string
-  icon: React.JSX.Element
-  label: string
-  value: string
-  hint?: string
-}): React.JSX.Element {
-  return (
-    <div className="detail-row">
-      <div className="detail-row__label-group">
-        <span className="detail-row__icon">{icon}</span>
-        <span className="detail-row__label">{label}</span>
-      </div>
-      <div className="detail-row__value-group">
-        <span className="detail-row__value">{value}</span>
-        {badge ? <span className="detail-row__badge">{badge}</span> : null}
-        {hint ? <span className="detail-row__hint">{hint}</span> : null}
-      </div>
-    </div>
-  )
+function formatWindowLabel(windowState: RateLimitWindowSnapshot, locale: LocaleCode): string {
+  if (!windowState.windowMinutes) return windowState.label
+  const minutes = windowState.windowMinutes
+  return locale === 'en-US'
+    ? windowState.label
+    : minutes >= 1440
+      ? `${minutes / 1440} 天`
+      : minutes >= 60
+        ? `${minutes / 60} 小时`
+        : `${minutes} 分钟`
 }
 
 function SettingField({
@@ -897,7 +1060,7 @@ function SettingField({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <div className="setting-field">
+    <div className="setting-field" role="group" aria-label={label}>
       <span className="setting-field__label">{label}</span>
       {children}
     </div>
@@ -919,6 +1082,7 @@ function SegmentedControl({
     <div className={`segmented ${disabled ? 'is-disabled' : ''}`}>
       {options.map((option) => (
         <button
+          aria-pressed={option.value === value}
           className={option.value === value ? 'is-active' : ''}
           disabled={disabled}
           key={option.value}
@@ -936,17 +1100,19 @@ function ToggleSwitch({
   checked,
   onChange,
   onLabel,
-  offLabel
+  offLabel,
+  label
 }: {
   checked: boolean
   onChange: (checked: boolean) => void
   onLabel: string
   offLabel: string
+  label: string
 }): React.JSX.Element {
   return (
     <button
       aria-checked={checked}
-      aria-label={checked ? onLabel : offLabel}
+      aria-label={`${label}: ${checked ? onLabel : offLabel}`}
       className={`toggle-switch ${checked ? 'is-checked' : ''}`}
       onClick={() => onChange(!checked)}
       role="switch"
@@ -1158,21 +1324,6 @@ function CloseIcon(): React.JSX.Element {
   )
 }
 
-function ServerIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <rect height="5" rx="1.5" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="5" />
-      <rect height="5" rx="1.5" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="14" />
-      <path
-        d="M8 7.5h.01M8 16.5h.01M12 7.5h6M12 16.5h6"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  )
-}
-
 function ClockIcon(): React.JSX.Element {
   return (
     <svg fill="none" viewBox="0 0 24 24">
@@ -1181,52 +1332,6 @@ function ClockIcon(): React.JSX.Element {
         d="M12 7.5v5l3 2"
         stroke="currentColor"
         strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  )
-}
-
-function CalendarIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <rect height="14" rx="2" stroke="currentColor" strokeWidth="1.75" width="16" x="4" y="6" />
-      <path
-        d="M8 3.75v4.5M16 3.75v4.5M4 10.5h16"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  )
-}
-
-function FileIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <path
-        d="M7 3.75h6.2L17 7.55V20.25H7z"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="1.75"
-      />
-      <path
-        d="M13 3.75V8h4M9.25 12.25h5.5M9.25 15.75h5.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  )
-}
-
-function FolderIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <path
-        d="M3.75 8.25a2 2 0 0 1 2-2h4.05l2 2h6.45a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2z"
-        stroke="currentColor"
         strokeLinejoin="round"
         strokeWidth="1.75"
       />
@@ -1265,20 +1370,6 @@ function AlertIcon(): React.JSX.Element {
       />
       <path
         d="M12 9v4.5M12 16.75h.01M11.13 4.64 4.37 17.5A1 1 0 0 0 5.25 19h13.5a1 1 0 0 0 .88-1.5L12.87 4.64a1 1 0 0 0-1.74 0Z"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.75"
-      />
-    </svg>
-  )
-}
-
-function SettingsIcon(): React.JSX.Element {
-  return (
-    <svg fill="none" viewBox="0 0 24 24">
-      <path
-        d="M10 4h10M4 12h16M14 20h6M14 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM9 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM14 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
