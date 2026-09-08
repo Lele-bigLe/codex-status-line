@@ -105,13 +105,13 @@ export const DEFAULT_REFRESH_INTERVAL_SECONDS = 30
 export const MIN_REFRESH_INTERVAL_SECONDS = 5
 export const MAX_REFRESH_INTERVAL_SECONDS = 600
 export const CAPSULE_WINDOW_SIZE = {
-  width: 288,
-  height: 62
+  width: 200,
+  height: 28
 } as const
 
 export const ORB_WINDOW_SIZE = {
-  width: 60,
-  height: 180
+  width: CAPSULE_WINDOW_SIZE.height,
+  height: CAPSULE_WINDOW_SIZE.width
 } as const
 
 export const CAPSULE_EDGE_GAP = 0

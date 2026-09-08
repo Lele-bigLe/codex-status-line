@@ -79,8 +79,6 @@ const CODEX_DISPATCH_COMMAND =
 const CODEX_DISPATCH_TIMEOUT_MS = 180_000
 const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
 const CODEX_DISPATCH_VERIFY_DELAY_MS = 8000
-const SINGLE_CAPSULE_WINDOW_WIDTH = 160
-const SINGLE_ORB_WINDOW_HEIGHT = 108
 // 激活态下官方接口的 reset_at 实测存在 ±1s 抖动;漂移态两次查询差值约等于查询间隔(8s+),
 // 容差取 3s 可同时避开抖动误判和漂移漏判
 const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
@@ -957,7 +955,11 @@ function setCapsuleBounds(bounds: Rectangle): void {
     current.height === bounds.height
   )
     return
-  mainWindow.setBounds(bounds)
+  if (current.width === bounds.width && current.height === bounds.height) {
+    mainWindow.setPosition(bounds.x, bounds.y, false)
+  } else {
+    mainWindow.setBounds(bounds, false)
+  }
 }
 
 function broadcastSnapshot(): void {
@@ -1231,26 +1233,7 @@ function resolveCapsuleWindowSize(viewMode: 'capsule' | 'orb'): {
   width: number
   height: number
 } {
-  const size = viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
-  const rateLimitCount = currentSnapshot.rateLimits.length
-
-  if (rateLimitCount === 0) {
-    return size
-  }
-
-  return viewMode === 'orb'
-    ? {
-        ...size,
-        height:
-          SINGLE_ORB_WINDOW_HEIGHT +
-          (rateLimitCount - 1) * (ORB_WINDOW_SIZE.height - SINGLE_ORB_WINDOW_HEIGHT)
-      }
-    : {
-        ...size,
-        width:
-          SINGLE_CAPSULE_WINDOW_WIDTH +
-          (rateLimitCount - 1) * (CAPSULE_WINDOW_SIZE.width - SINGLE_CAPSULE_WINDOW_WIDTH)
-      }
+  return viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
 }
 
 function resolvePanelBounds(x?: number, y?: number): Rectangle {

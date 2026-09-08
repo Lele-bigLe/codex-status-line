@@ -27,13 +27,22 @@ body {
 
 .widget {
   position: relative;
-  width: 100%;
-  height: 100%;
+  flex: none;
+  width: var(--status-bar-width);
+  height: var(--status-bar-height);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
+}
+
+/* 跟随实际窗口方向旋转，避免尺寸变化和偏好通知之间的短暂拉伸。 */
+@media (orientation: portrait) {
+  .app-shell--capsule .widget {
+    transform-origin: top left;
+    transform: translateX(var(--status-bar-height)) rotate(90deg);
+  }
 }
 
 .ghost-button,
@@ -56,8 +65,8 @@ body {
   overflow: hidden;
   color: rgba(240, 245, 250, 0.94);
   border: 0;
-  border-radius: 20px;
-  background: linear-gradient(168deg, rgba(32, 42, 54, 0.96) 0%, rgba(16, 22, 32, 0.96) 100%);
+  border-radius: 3px;
+  background: rgba(22, 28, 36, 0.85);
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.08),
     0 8px 20px rgba(4, 10, 18, 0.18),
@@ -124,19 +133,6 @@ body {
   animation: capsule-refresh-sheen 680ms cubic-bezier(0.18, 0.86, 0.32, 1);
 }
 
-.capsule--orb.is-manual-refreshing::before {
-  background: linear-gradient(
-    180deg,
-    transparent 26%,
-    color-mix(in srgb, var(--capsule-accent) 34%, transparent) 45%,
-    rgba(255, 255, 255, 0.24) 50%,
-    color-mix(in srgb, var(--capsule-accent) 26%, transparent) 56%,
-    transparent 74%
-  );
-  transform: translateY(-72%);
-  animation-name: capsule-refresh-sheen-y;
-}
-
 .capsule.is-manual-refreshing .metric-segment__progress span,
 .capsule.is-manual-refreshing .edge-metric__progress span {
   filter: brightness(1.45);
@@ -159,11 +155,28 @@ body {
   --capsule-accent: rgba(146, 157, 170, 0.68);
 }
 
-.capsule--orb {
-  padding: 0 0 26px;
-  grid-template-columns: 1fr;
-  border-radius: 17px;
-  background: linear-gradient(180deg, rgba(28, 38, 52, 0.96) 0%, rgba(14, 20, 30, 0.96) 100%);
+.status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.status-line__separator {
+  color: #647181;
+}
+
+.status-line__value {
+  color: var(--capsule-accent);
+}
+
+.capsule.is-stale .status-line__value {
+  color: #b3c0ce;
 }
 
 .capsule__summary,
@@ -1185,15 +1198,9 @@ body {
   top: 50%;
   transform: translateY(-50%);
   width: 28px;
-  height: 36px;
-}
-.widget--orb .capsule__details {
-  top: auto;
-  bottom: 0;
-  right: 0;
-  width: 100%;
-  height: 26px;
-  transform: none;
+  height: 24px;
+  border-radius: 0;
+  border-left: 1px solid #647181;
 }
 .capsule__status {
   position: absolute;

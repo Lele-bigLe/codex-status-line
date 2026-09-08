@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
+  CAPSULE_WINDOW_SIZE,
   DEFAULT_SETTINGS,
   DEFAULT_WINDOW_PREFERENCES,
   REFRESH_INTERVAL_OPTIONS,
@@ -284,16 +285,11 @@ function App(): React.JSX.Element {
         : undefined
   const rateLimitWindows = snapshot.rateLimits
   const rateLimitCount = rateLimitWindows.length
-  const percentages = rateLimitWindows
-    .map((window) =>
-      settings.percentageMode === 'used' ? window.usedPercent : window.remainingPercent
-    )
-    .filter((value): value is number => value !== undefined)
-  const capsuleDisplayPercent = percentages.length
-    ? settings.percentageMode === 'used'
-      ? Math.max(...percentages)
-      : Math.min(...percentages)
-    : undefined
+  const primaryWindow =
+    rateLimitWindows.find((window) => window.windowMinutes === 10080 || window.label === '7d') ??
+    rateLimitWindows[0]
+  const capsuleDisplayPercent =
+    settings.percentageMode === 'used' ? primaryWindow?.usedPercent : primaryWindow?.remainingPercent
   const capsuleTone = resolveMetricTone(capsuleDisplayPercent, settings.percentageMode)
   const capsuleViewMode = windowPreferences.viewMode
   const capsuleClassName = [
@@ -554,7 +550,15 @@ function App(): React.JSX.Element {
   if (windowRole === 'capsule') {
     return (
       <div className="app-shell app-shell--capsule">
-        <main className={`widget widget--${capsuleViewMode}`}>
+        <main
+          className={`widget widget--${capsuleViewMode}`}
+          style={
+            {
+              '--status-bar-width': `${CAPSULE_WINDOW_SIZE.width}px`,
+              '--status-bar-height': `${CAPSULE_WINDOW_SIZE.height}px`
+            } as CSSProperties
+          }
+        >
           <section
             aria-label={`${statusLabel}. ${settings.percentageMode === 'used' ? copy.used : copy.remaining}. ${rateLimitWindows.map((window) => `${window.label} ${(settings.percentageMode === 'used' ? window.usedPercent : window.remainingPercent) ?? '--'}%`).join(', ')}. ${copy.refresh}`}
             aria-busy={snapshot.isRefreshing}
@@ -568,54 +572,17 @@ function App(): React.JSX.Element {
             role={canRefresh ? 'button' : undefined}
             tabIndex={canRefresh ? 0 : -1}
           >
-            <span className="capsule__status" aria-hidden="true">
-              {isStale ? '!' : snapshot.isRefreshing ? '…' : '·'}
-            </span>
-            {rateLimitCount === 0 ? (
-              <div className="capsule__empty">
-                <strong>Codex</strong>
-                <span>{snapshot.isRefreshing ? copy.syncing : copy.noData}</span>
-              </div>
-            ) : capsuleViewMode === 'orb' ? (
-              <div
-                className={`capsule__edge-metrics${rateLimitCount === 1 ? ' capsule__edge-metrics--single' : ''}`}
-                style={
-                  rateLimitCount > 2
-                    ? { gridTemplateRows: `repeat(${rateLimitCount}, minmax(0, 1fr))` }
-                    : undefined
-                }
-                aria-hidden="true"
-              >
-                {rateLimitWindows.map((windowState) => (
-                  <EdgeMetricSegment
-                    key={windowState.id}
-                    locale={settings.locale}
-                    percentageMode={settings.percentageMode}
-                    windowState={windowState}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="capsule__summary" aria-hidden="true">
-                <div
-                  className={`capsule__metrics${rateLimitCount === 1 ? ' capsule__metrics--single' : ''}`}
-                  style={
-                    rateLimitCount > 2
-                      ? { gridTemplateColumns: `repeat(${rateLimitCount}, minmax(0, 1fr))` }
-                      : undefined
-                  }
-                >
-                  {rateLimitWindows.map((windowState) => (
-                    <MetricSegment
-                      key={windowState.id}
-                      locale={settings.locale}
-                      percentageMode={settings.percentageMode}
-                      windowState={windowState}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="status-line" aria-hidden="true">
+              <strong>{primaryWindow?.label ?? '7d'}</strong>
+              <span className="status-line__separator">|</span>
+              <span title={formatAbsoluteDate(primaryWindow?.resetsAt, settings.locale)}>
+                {formatCapsuleResetTime(primaryWindow?.resetsAt, settings.locale)}
+              </span>
+              <span className="status-line__separator">|</span>
+              <strong className="status-line__value">
+                {capsuleDisplayPercent === undefined ? '--' : Math.round(capsuleDisplayPercent) + '%'}
+              </strong>
+            </div>
           </section>
           <button
             className="capsule__details"
@@ -923,66 +890,6 @@ function App(): React.JSX.Element {
           </div>
         )}
       </section>
-    </div>
-  )
-}
-
-function MetricSegment({
-  locale,
-  percentageMode,
-  windowState
-}: {
-  locale: LocaleCode
-  percentageMode: PercentageMode
-  windowState: RateLimitWindowSnapshot
-}): React.JSX.Element {
-  const displayPercent =
-    percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
-  const tone = resolveMetricTone(displayPercent, percentageMode)
-  const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
-  const progressStyle = createMetricProgressStyle(displayPercent)
-
-  return (
-    <div className={`metric-segment metric-segment--${tone}`} style={progressStyle}>
-      <span className="metric-segment__label">
-        <span className="metric-segment__name">{windowState.label}</span>
-        <span className="metric-segment__reset">{resetText}</span>
-      </span>
-      <div className="metric-segment__value">
-        <span>{displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}</span>
-      </div>
-      <span className="metric-segment__progress" aria-hidden="true">
-        <span />
-      </span>
-    </div>
-  )
-}
-
-function EdgeMetricSegment({
-  locale,
-  percentageMode,
-  windowState
-}: {
-  locale: LocaleCode
-  percentageMode: PercentageMode
-  windowState: RateLimitWindowSnapshot
-}): React.JSX.Element {
-  const displayPercent =
-    percentageMode === 'used' ? windowState?.usedPercent : windowState?.remainingPercent
-  const tone = resolveMetricTone(displayPercent, percentageMode)
-  const resetText = formatCapsuleResetTime(windowState?.resetsAt, locale)
-  const progressStyle = createMetricProgressStyle(displayPercent)
-
-  return (
-    <div className={`edge-metric edge-metric--${tone}`} style={progressStyle}>
-      <span className="edge-metric__label">{windowState.label}</span>
-      <span className="edge-metric__reset">{resetText}</span>
-      <span className="edge-metric__value">
-        {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
-      </span>
-      <span className="edge-metric__progress" aria-hidden="true">
-        <span />
-      </span>
     </div>
   )
 }
