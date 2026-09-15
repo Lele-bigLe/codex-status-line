@@ -18,20 +18,18 @@ import { homedir } from 'node:os'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import electronUpdater, { type AppUpdater } from 'electron-updater'
-import appIcon from '../../build/icon-1.png?asset'
-import trayIcon from '../../build/icon-2.png?asset'
+import appIcon from '../../build/icon.png?asset'
 import {
   CAPSULE_DOCK_THRESHOLD,
   CAPSULE_DOCK_EDGE_GAP,
   CAPSULE_EDGE_GAP,
-  CAPSULE_WINDOW_SIZE,
   CAPSULE_UNDOCK_THRESHOLD,
   DEFAULT_SETTINGS,
   DEFAULT_WINDOW_PREFERENCES,
-  ORB_WINDOW_SIZE,
   PANEL_WINDOW_SIZE,
   createEmptySnapshot,
   normalizeSettings,
+  getCapsuleWindowSize,
   type CapsuleDragMovePayload,
   type DockEdge,
   type PanelView,
@@ -148,7 +146,7 @@ function createCapsuleWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon: appIcon } : {}),
+    icon: appIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -215,7 +213,7 @@ function createPanelWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon: appIcon } : {}),
+    icon: appIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -361,6 +359,9 @@ function registerIpcHandlers(): void {
 
     queuePersistState()
     syncRefreshTimer()
+    if (previousSettings.capsuleScale !== nextSettings.capsuleScale) {
+      syncCapsuleWindowBounds()
+    }
     if (previousSettings.displayMode !== nextSettings.displayMode) {
       if (nextSettings.displayMode === 'floating') {
         showWindow()
@@ -401,8 +402,8 @@ function registerIpcHandlers(): void {
 }
 
 function createTray(): void {
-  const image = nativeImage.createFromPath(trayIcon)
-  tray = new Tray(image.isEmpty() ? trayIcon : image.resize({ width: 16, height: 16 }))
+  const image = nativeImage.createFromPath(appIcon)
+  tray = new Tray(image.isEmpty() ? appIcon : image.resize({ width: 32, height: 32 }))
   trayMenuKey = undefined
   trayTooltip = undefined
   trayImageKey = undefined
@@ -1293,7 +1294,7 @@ function resolveCapsuleWindowSize(viewMode: 'capsule' | 'orb'): {
   width: number
   height: number
 } {
-  return viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
+  return getCapsuleWindowSize(viewMode, persistedState.settings.capsuleScale)
 }
 
 function resolvePanelBounds(x?: number, y?: number): Rectangle {

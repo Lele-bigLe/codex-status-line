@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import appIcon from '../../../build/icon.png'
 import {
   CAPSULE_WINDOW_SIZE,
   DEFAULT_SETTINGS,
@@ -7,6 +8,8 @@ import {
   MAX_REFRESH_INTERVAL_SECONDS,
   MIN_REFRESH_INTERVAL_SECONDS,
   createEmptySnapshot,
+  getCapsuleWindowSize,
+  normalizeCapsuleScale,
   selectPrimaryRateLimit,
   type AppSettings,
   type CapsuleDragMovePayload,
@@ -50,6 +53,12 @@ const COPY = {
     custom: '自定义',
     percentageMode: '百分比口径',
     displayMode: '显示方式',
+    theme: '界面主题',
+    lightTheme: '浅色',
+    darkTheme: '深色',
+    settingsIntro: '调整显示与刷新方式，设置自动保存。',
+    capsuleScale: '悬浮窗大小',
+    capsuleScaleHint: '文字和状态条等比例缩放，支持 100–300%。',
     floatingMode: '悬浮状态条',
     trayMode: '托盘点击详情',
     language: '语种',
@@ -106,6 +115,12 @@ const COPY = {
     custom: 'Custom',
     percentageMode: 'Metric mode',
     displayMode: 'Display mode',
+    theme: 'Theme',
+    lightTheme: 'Light',
+    darkTheme: 'Dark',
+    settingsIntro: 'Choose how the app looks and refreshes. Changes save automatically.',
+    capsuleScale: 'Floating window size',
+    capsuleScaleHint: 'Scale text and bar together, from 100% to 300%.',
     floatingMode: 'Floating bar',
     trayMode: 'Tray details',
     language: 'Language',
@@ -554,13 +569,14 @@ function App(): React.JSX.Element {
 
   if (windowRole === 'capsule') {
     return (
-      <div className="app-shell app-shell--capsule">
+      <div className="app-shell app-shell--capsule" data-theme={settings.theme}>
         <main
           className={`widget widget--${capsuleViewMode}`}
           style={
             {
               '--status-bar-width': `${CAPSULE_WINDOW_SIZE.width}px`,
-              '--status-bar-height': `${CAPSULE_WINDOW_SIZE.height}px`
+              '--status-bar-height': `${CAPSULE_WINDOW_SIZE.height}px`,
+              zoom: settings.capsuleScale / 100
             } as CSSProperties
           }
         >
@@ -606,11 +622,12 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <div className="app-shell app-shell--panel">
+    <div className="app-shell app-shell--panel" data-theme={settings.theme}>
       <section className={`panel panel--${panelView}`}>
         <header className="panel__topbar">
           <span className="panel__brand">
-            CODEX <span>STATUS</span>
+            <img src={appIcon} alt="" width={26} height={26} />
+            Codex <span>Status</span>
           </span>
           <button
             className="icon-button"
@@ -689,7 +706,7 @@ function App(): React.JSX.Element {
                 </div>
               )}
 
-              {fallbackBanner ? (
+              {fallbackBanner && rateLimitCount > 0 ? (
                 <div className="fallback-card">
                   <div className="fallback-card__icon">
                     <AlertIcon />
@@ -755,9 +772,7 @@ function App(): React.JSX.Element {
           <div className="panel__body panel__body--settings">
             <div className="panel__content">
               <div className="panel__header">
-                <div>
-                  <h2 className="panel__title">{copy.settings}</h2>
-                </div>
+                <p className="panel__intro">{copy.settingsIntro}</p>
               </div>
 
               {settingsIssue ? (
@@ -829,6 +844,18 @@ function App(): React.JSX.Element {
 
                 <div className="settings-section">
                   <p className="settings-section__title">{copy.groupDisplay}</p>
+                  <SettingField label={copy.theme}>
+                    <SegmentedControl
+                      value={settings.theme}
+                      options={[
+                        { label: copy.lightTheme, value: 'light' },
+                        { label: copy.darkTheme, value: 'dark' }
+                      ]}
+                      onChange={(value) => {
+                        void handleSettingsPatch({ theme: value as AppSettings['theme'] })
+                      }}
+                    />
+                  </SettingField>
                   <SettingField label={copy.displayMode}>
                     <SegmentedControl
                       onChange={(value) => {
@@ -840,6 +867,39 @@ function App(): React.JSX.Element {
                       ]}
                       value={settings.displayMode}
                     />
+                  </SettingField>
+
+                  <SettingField label={copy.capsuleScale}>
+                    <div className="setting-stack">
+                      <SegmentedControl
+                        value={String(settings.capsuleScale)}
+                        options={[100, 125, 150, 200].map((scale) => ({ label: `${scale}%`, value: String(scale) }))}
+                        onChange={(value) => { void handleSettingsPatch({ capsuleScale: Number(value) }) }}
+                      />
+                      <label className="inline-input inline-input--scale">
+                        <input
+                          key={settings.capsuleScale}
+                          type="number"
+                          aria-label={copy.capsuleScale}
+                          min={100}
+                          max={300}
+                          step={1}
+                          defaultValue={settings.capsuleScale}
+                          onBlur={(event) => {
+                            const value = event.currentTarget.valueAsNumber
+                            const scale = Number.isFinite(value) ? normalizeCapsuleScale(value) : settings.capsuleScale
+                            event.currentTarget.value = String(scale)
+                            if (scale !== settings.capsuleScale) void handleSettingsPatch({ capsuleScale: scale })
+                          }}
+                          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                        />
+                        <em>%</em>
+                      </label>
+                      <p className="quota-card__date">
+                        {copy.capsuleScaleHint}{' '}
+                        {getCapsuleWindowSize('capsule', settings.capsuleScale).width} × {getCapsuleWindowSize('capsule', settings.capsuleScale).height}
+                      </p>
+                    </div>
                   </SettingField>
 
                   <SettingField label={copy.percentageMode}>

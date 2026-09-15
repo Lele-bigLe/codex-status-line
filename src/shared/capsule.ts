@@ -45,6 +45,8 @@ export interface UsageSnapshot {
 }
 
 export interface AppSettings {
+  theme: 'light' | 'dark'
+  capsuleScale: number
   displayMode: 'floating' | 'tray'
   refreshMode: RefreshMode
   refreshIntervalSeconds: number
@@ -125,6 +127,18 @@ export const ORB_WINDOW_SIZE = {
   height: CAPSULE_WINDOW_SIZE.width
 } as const
 
+export function normalizeCapsuleScale(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(300, Math.max(100, Math.round(value)))
+    : 100
+}
+
+export function getCapsuleWindowSize(viewMode: CapsuleViewMode, scale: number): { width: number; height: number } {
+  const size = viewMode === 'orb' ? ORB_WINDOW_SIZE : CAPSULE_WINDOW_SIZE
+  const factor = normalizeCapsuleScale(scale) / 100
+  return { width: Math.ceil(size.width * factor), height: Math.ceil(size.height * factor) }
+}
+
 export const CAPSULE_EDGE_GAP = 0
 export const CAPSULE_DOCK_EDGE_GAP = 0
 export const CAPSULE_DOCK_THRESHOLD = 18
@@ -136,6 +150,8 @@ export const PANEL_WINDOW_SIZE = {
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'light',
+  capsuleScale: 100,
   displayMode: 'tray',
   refreshMode: 'auto',
   refreshIntervalSeconds: DEFAULT_REFRESH_INTERVAL_SECONDS,
@@ -164,6 +180,8 @@ export function createEmptySnapshot(): UsageSnapshot {
 
 export function normalizeSettings(input: Partial<AppSettings> | undefined): AppSettings {
   return {
+    theme: input?.theme === 'dark' ? 'dark' : 'light',
+    capsuleScale: normalizeCapsuleScale(input?.capsuleScale),
     displayMode:
       input?.displayMode === 'floating' || input?.displayMode === 'tray'
         ? input.displayMode

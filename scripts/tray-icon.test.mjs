@@ -11,7 +11,7 @@ function moduleUrl(source) {
 }
 
 const sharedUrl = moduleUrl(readFileSync(new URL('../src/shared/capsule.ts', import.meta.url), 'utf8'))
-const { normalizeSettings, selectPrimaryRateLimit } = await import(sharedUrl)
+const { normalizeSettings, selectPrimaryRateLimit, getCapsuleWindowSize } = await import(sharedUrl)
 const { createTrayBitmap, getTrayIconState } = await import(moduleUrl(
   readFileSync(new URL('../src/main/services/tray-icon.ts', import.meta.url), 'utf8')
     .replace('../../shared/capsule', sharedUrl)
@@ -24,6 +24,28 @@ test('display mode survives saved settings and accepts older settings without a 
   }
   assert.equal(normalizeSettings({}).displayMode, 'tray')
   assert.equal(normalizeSettings({ displayMode: 'invalid' }).displayMode, 'tray')
+})
+
+test('theme is saved and older or invalid settings use the light theme', () => {
+  assert.equal(normalizeSettings({}).theme, 'light')
+  assert.equal(normalizeSettings({ theme: 'invalid' }).theme, 'light')
+  for (const theme of ['light', 'dark']) {
+    const saved = JSON.parse(JSON.stringify(normalizeSettings({ theme })))
+    assert.equal(normalizeSettings(saved).theme, theme)
+  }
+})
+
+test('floating size preserves saved scale, validates bounds and swaps docked dimensions', () => {
+  assert.equal(normalizeSettings({}).capsuleScale, 100)
+  assert.equal(normalizeSettings({ capsuleScale: NaN }).capsuleScale, 100)
+  assert.equal(normalizeSettings({ capsuleScale: '200' }).capsuleScale, 100)
+  assert.equal(normalizeSettings({ capsuleScale: 30 }).capsuleScale, 100)
+  assert.equal(normalizeSettings({ capsuleScale: 900 }).capsuleScale, 300)
+  const saved = JSON.parse(JSON.stringify(normalizeSettings({ capsuleScale: 150 })))
+  assert.equal(normalizeSettings(saved).capsuleScale, 150)
+  assert.deepEqual(getCapsuleWindowSize('capsule', 150), { width: 300, height: 42 })
+  assert.deepEqual(getCapsuleWindowSize('orb', 150), { width: 42, height: 300 })
+  assert.deepEqual(getCapsuleWindowSize('capsule', 133), { width: 266, height: 38 })
 })
 
 test('primary quota prefers 5h, then 7d, and supports other or absent windows', () => {
