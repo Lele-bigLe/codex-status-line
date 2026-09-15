@@ -1,6 +1,6 @@
 {
   "name": "codex-status",
-  "version": "1.0.13",
+  "version": "1.1.1",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -8,7 +8,7 @@
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
-    "test:quota": "node --experimental-strip-types --test scripts/quota-recheck.test.mjs",
+    "test:quota": "node --test scripts/quota-recheck.test.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",

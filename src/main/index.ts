@@ -12,9 +12,7 @@ import {
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
 import { watchFile, unwatchFile } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import electronUpdater, { type AppUpdater } from 'electron-updater'
@@ -42,10 +40,8 @@ import {
   type WindowPreferences
 } from '../shared/capsule'
 import {
-  areOfficialDispatchResetAtsStable,
   collectUsageSnapshot,
   clearQuotaCache,
-  fetchOfficialDispatchResetAts,
   readOfficialCodexCredentials,
   resolveCodexAuthPath
 } from './services/quota'
@@ -72,16 +68,6 @@ const CHANNELS = {
   command: 'codex-status:command'
 } as const
 
-// --ignore-user-config 隔离 ~/.codex/config.toml,模型固定为 gpt-5.4-mini,不随用户配置变化
-const CODEX_DISPATCH_COMMAND =
-  'codex exec --skip-git-repo-check --ephemeral --ignore-user-config --color never -m gpt-5.4-mini hi'
-const CODEX_DISPATCH_TIMEOUT_MS = 180_000
-const CODEX_DISPATCH_OUTPUT_LIMIT = 2000
-const CODEX_DISPATCH_VERIFY_DELAY_MS = 8000
-// 激活态下官方接口的 reset_at 实测存在 ±1s 抖动;漂移态两次查询差值约等于查询间隔(8s+),
-// 容差取 3s 可同时避开抖动误判和漂移漏判
-const CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS = 3
-
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -89,7 +75,6 @@ let trayMenuKey: string | undefined
 let trayTooltip: string | undefined
 let trayImageKey: string | undefined
 let trayTimer: NodeJS.Timeout | undefined
-let dispatchChild: ChildProcess | undefined
 let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
 let refreshPromise: Promise<void> | undefined
@@ -447,24 +432,11 @@ function refreshTrayMenu(): void {
   const menuKey = JSON.stringify([
     persistedState.settings.locale,
     canRefreshStatus(),
-    Boolean(dispatchChild),
     isCheckingForUpdates
   ])
   if (menuKey === trayMenuKey) return
 
   const labels = getTrayLabels()
-  const dispatchMenuItems: MenuItemConstructorOptions[] =
-    process.platform === 'win32'
-      ? [
-          {
-            label: labels.dispatch,
-            enabled: !dispatchChild,
-            click: () => {
-              launchCodexDispatch()
-            }
-          }
-        ]
-      : []
   const menuTemplate: MenuItemConstructorOptions[] = [
     {
       label: labels.refresh,
@@ -473,7 +445,6 @@ function refreshTrayMenu(): void {
         void refreshStatus()
       }
     },
-    ...dispatchMenuItems,
     {
       label: labels.toggle,
       click: () => {
@@ -513,13 +484,12 @@ function refreshTrayMenu(): void {
 }
 
 function getTrayLabels(): Record<
-  'refresh' | 'dispatch' | 'toggle' | 'details' | 'settings' | 'checkForUpdates' | 'quit',
+  'refresh' | 'toggle' | 'details' | 'settings' | 'checkForUpdates' | 'quit',
   string
 > {
   if (persistedState.settings.locale === 'en-US') {
     return {
       refresh: 'Refresh',
-      dispatch: 'Dispatch',
       toggle: 'Show/Hide Floating Window',
       details: 'Details',
       settings: 'Settings',
@@ -530,7 +500,6 @@ function getTrayLabels(): Record<
 
   return {
     refresh: '刷新',
-    dispatch: '投送',
     toggle: '显示/隐藏悬浮窗',
     details: '详情',
     settings: '设置',
@@ -626,176 +595,6 @@ function openSettingsFromTray(): void {
 
 function openDetailsFromTray(): void {
   openPanelWindow('details')
-}
-
-function launchCodexDispatch(): void {
-  if (process.platform !== 'win32' || dispatchChild) {
-    return
-  }
-
-  const isEnglish = persistedState.settings.locale === 'en-US'
-  let output = ''
-  let timedOut = false
-
-  // 静默执行不弹终端窗口;codex 的 npm shim 是 .cmd,必须经 cmd.exe 启动
-  const child = spawn('cmd.exe', ['/c', CODEX_DISPATCH_COMMAND], {
-    cwd: homedir(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    windowsVerbatimArguments: true
-  })
-  dispatchChild = child
-  refreshTrayMenu()
-
-  const appendOutput = (chunk: Buffer): void => {
-    output = `${output}${chunk.toString()}`.slice(-CODEX_DISPATCH_OUTPUT_LIMIT)
-  }
-  child.stdout?.on('data', appendOutput)
-  child.stderr?.on('data', appendOutput)
-
-  // codex 卡死时终止整个进程树,避免静默进程无限挂起、菜单一直禁用
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true
-    if (child.pid !== undefined) {
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
-    }
-  }, CODEX_DISPATCH_TIMEOUT_MS)
-
-  const release = (): boolean => {
-    if (dispatchChild !== child) {
-      return false
-    }
-
-    clearTimeout(timeoutTimer)
-    dispatchChild = undefined
-    refreshTrayMenu()
-    return true
-  }
-
-  const settleFailure = (detail: string): void => {
-    if (!release()) {
-      return
-    }
-
-    dialog.showErrorBox(
-      isEnglish ? 'Codex dispatch failed' : 'Codex 投送失败',
-      detail.trim() || (isEnglish ? 'Unknown error.' : '未知错误')
-    )
-  }
-
-  // exit 0 只说明进程正常退出;是否真正启动计时窗口需向官方额度接口二次确认。
-  // 验证期间保持 dispatchChild 占用,避免并发投送干扰 reset_at 对比
-  const settleSuccess = async (): Promise<void> => {
-    const verdict = await verifyDispatchActivation()
-    if (!release()) {
-      return
-    }
-
-    void refreshStatus()
-
-    if (verdict === 'inactive') {
-      dialog.showErrorBox(
-        isEnglish ? 'Codex dispatch failed' : 'Codex 投送失败',
-        isEnglish
-          ? 'Command finished, but the rate limit window was not activated. This dispatch did not take effect.'
-          : '命令已执行完成,但 Codex 计时窗口未被激活,本次投送未生效。'
-      )
-      return
-    }
-
-    new Notification({
-      title: isEnglish ? 'Codex Dispatch' : 'Codex 投送',
-      body:
-        verdict === 'activated'
-          ? isEnglish
-            ? 'Dispatch completed. Rate limit window is counting down.'
-            : '投送完成,计时窗口已激活'
-          : verdict === 'unlimited'
-            ? isEnglish
-              ? 'Dispatch completed. The official API currently reports no rate limit window.'
-              : '投送完成,官方当前未返回计时限额'
-            : isEnglish
-              ? 'Dispatch completed, but window activation could not be verified.'
-              : '投送完成,但官方接口不可用,未能确认计时窗口',
-      silent: true
-    }).show()
-  }
-
-  child.on('error', (error) => {
-    settleFailure(error.message)
-  })
-
-  child.on('exit', (code) => {
-    if (code === 0) {
-      // codex exec 正常完成一次对话必然输出 tokens used;缺失说明没有真实消费
-      if (/tokens used/i.test(output)) {
-        void settleSuccess()
-        return
-      }
-
-      settleFailure(
-        [
-          isEnglish
-            ? 'Process exited normally but reported no token usage; the request likely never reached Codex.'
-            : '进程正常退出,但输出中没有 tokens used,请求可能没有真正发送给 Codex。',
-          output
-        ]
-          .filter(Boolean)
-          .join('\n')
-      )
-      return
-    }
-
-    const timeoutSeconds = Math.round(CODEX_DISPATCH_TIMEOUT_MS / 1000)
-    const reason = timedOut
-      ? isEnglish
-        ? `Timed out after ${timeoutSeconds}s and was terminated.`
-        : `等待超过 ${timeoutSeconds} 秒,已强制终止。`
-      : ''
-    settleFailure([reason, output].filter(Boolean).join('\n'))
-  })
-}
-
-// 官方当前窗口未激活时 reset_at 恒为"当前时间+窗口全长",随查询时间漂移;激活后固定(仅 ±1s 抖动)。
-// 两次间隔查询差值在容差内即已激活;首轮超差可能是激活恰好落在两次查询之间,再补一轮对比
-async function verifyDispatchActivation(): Promise<
-  'activated' | 'inactive' | 'unlimited' | 'unknown'
-> {
-  const first = await fetchOfficialDispatchResetAts()
-  if (first === null) {
-    return 'unlimited'
-  }
-  if (first === undefined) {
-    return 'unknown'
-  }
-
-  await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const second = await fetchOfficialDispatchResetAts()
-  if (second === null) {
-    return 'unlimited'
-  }
-  if (second === undefined) {
-    return 'unknown'
-  }
-  if (areOfficialDispatchResetAtsStable(first, second, CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS)) {
-    return 'activated'
-  }
-
-  await delay(CODEX_DISPATCH_VERIFY_DELAY_MS)
-  const third = await fetchOfficialDispatchResetAts()
-  if (third === null) {
-    return 'unlimited'
-  }
-  if (third === undefined) {
-    return 'unknown'
-  }
-  return areOfficialDispatchResetAtsStable(second, third, CODEX_DISPATCH_RESET_AT_TOLERANCE_SECONDS)
-    ? 'activated'
-    : 'inactive'
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function checkForUpdates(): Promise<void> {

@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { createHash } from 'node:crypto'
-import https from 'node:https'
+import { net } from 'electron'
 import os from 'node:os'
 import path from 'node:path'
 import type { RateLimitWindowSnapshot, UsageSnapshot } from '../../shared/capsule'
@@ -24,7 +24,7 @@ interface CredentialLookup {
 }
 
 const OFFICIAL_CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
-const OFFICIAL_QUOTA_TIMEOUT_MS = 8000
+const OFFICIAL_QUOTA_TIMEOUT_MS = 20000
 const CACHE_MAX_AGE_MS = 15 * 60 * 1000
 let cachedSnapshot: { key: string; snapshot: UsageSnapshot } | undefined
 
@@ -57,11 +57,30 @@ export async function collectUsageSnapshot(
   let rateLimits: UsageSnapshot['rateLimits'] | undefined
   let issue: string | undefined
   try {
-    const response = await requestJson(
-      OFFICIAL_CODEX_USAGE_URL,
-      buildOfficialHeaders(credentials),
-      OFFICIAL_QUOTA_TIMEOUT_MS
-    )
+    let response: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        const retryLookup = await readOfficialCodexCredentials()
+        if (
+          retryLookup.credentials?.key !== credentials.key ||
+          retryLookup.credentials?.accessToken !== credentials.accessToken
+        ) {
+          throw new Error('登录信息已变化,已取消重试,等待重新同步')
+        }
+      }
+      try {
+        response = await requestJson(
+          OFFICIAL_CODEX_USAGE_URL,
+          buildOfficialHeaders(credentials),
+          OFFICIAL_QUOTA_TIMEOUT_MS
+        )
+        break
+      } catch (error) {
+        if (!(error instanceof OfficialRequestError) || !error.retryable) throw error
+        if (attempt === 1) throw new Error(`${error.message}（已重试1次）`)
+      }
+    }
     const body = getRecord(response)
     const responseAccount = getString(body?.account_id ?? body?.accountId)
     if (responseAccount && responseAccount !== credentials.accountId) {
@@ -146,64 +165,6 @@ function buildOfficialHeaders(credentials: {
   return headers
 }
 
-// null 表示官方明确未返回计时窗口;undefined 表示接口不可用或窗口数据无效。
-export function parseOfficialDispatchResetAts(
-  response: unknown
-): Record<string, number> | null | undefined {
-  const body = getRecord(response)
-  const rateLimit = getRecord(body?.rate_limit ?? body?.rateLimit)
-  if (!rateLimit) {
-    return undefined
-  }
-
-  const resetAts: Record<string, number> = {}
-  for (const [id, windowState] of getOfficialWindowEntries(rateLimit)) {
-    const resetAt = getNonNegativeNumber(windowState.reset_at ?? windowState.resetAt)
-    if (resetAt === undefined) {
-      return undefined
-    }
-    resetAts[id] = resetAt
-  }
-
-  return Object.keys(resetAts).length > 0 ? resetAts : null
-}
-
-export function areOfficialDispatchResetAtsStable(
-  left: Record<string, number>,
-  right: Record<string, number>,
-  toleranceSeconds: number
-): boolean {
-  const keys = Object.keys(left)
-  return (
-    keys.length === Object.keys(right).length &&
-    keys.every(
-      (key) => right[key] !== undefined && Math.abs(left[key] - right[key]) <= toleranceSeconds
-    )
-  )
-}
-
-// 窗口未激活时,官方接口的 reset_at 恒等于"当前时间 + 窗口全长"并随查询时间漂移;
-// 激活后 reset_at 固定不变。调用方据此逐个判断官方实际返回的窗口是否启动计时。
-export async function fetchOfficialDispatchResetAts(): Promise<
-  Record<string, number> | null | undefined
-> {
-  const credentialLookup = await readOfficialCodexCredentials()
-  if (!credentialLookup.credentials) {
-    return undefined
-  }
-
-  try {
-    const response = await requestJson(
-      OFFICIAL_CODEX_USAGE_URL,
-      buildOfficialHeaders(credentialLookup.credentials),
-      OFFICIAL_QUOTA_TIMEOUT_MS
-    )
-    return parseOfficialDispatchResetAts(response)
-  } catch {
-    return undefined
-  }
-}
-
 export async function readOfficialCodexCredentials(): Promise<CredentialLookup> {
   const authPath = resolveCodexAuthPath()
 
@@ -274,53 +235,76 @@ function decodeClaims(token: string | undefined): Record<string, unknown> | unde
   }
 }
 
-function requestJson(
+class OfficialRequestError extends Error {
+  constructor(
+    message: string,
+    readonly retryable = false
+  ) {
+    super(message)
+  }
+}
+
+export async function requestJson(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number
 ): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const request = https.request(new URL(url), { method: 'GET', headers }, (response) => {
-      const chunks: Buffer[] = []
-
-      response.on('data', (chunk: Buffer) => {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-      })
-      response.on('error', reject)
-      response.on('aborted', () => reject(new Error('官方额度连接中断')))
-
-      response.on('end', () => {
-        const statusCode = response.statusCode ?? 0
-        const body = Buffer.concat(chunks).toString('utf8')
-
-        if (statusCode === 401 || statusCode === 403) {
-          reject(new Error(`登录已失效或无访问权限 HTTP ${statusCode},请在 Codex 中重新登录`))
-          return
-        }
-
-        if (statusCode < 200 || statusCode >= 300) {
-          reject(new Error(`官方额度接口返回 HTTP ${statusCode}`))
-          return
-        }
-
-        try {
-          resolve(body.trim().length > 0 ? JSON.parse(body) : {})
-        } catch {
-          reject(new Error('官方额度接口返回内容不是有效 JSON'))
-        }
-      })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs))
+  try {
+    // 使用 Chromium 网络栈，沿用系统代理/PAC；不携带浏览器登录 Cookie，也不跟随重定向。
+    const response = await net.fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'manual'
     })
-
-    const timeout = setTimeout(
-      () => {
-        request.destroy(new Error('官方额度接口请求超时'))
-      },
-      Math.max(1000, timeoutMs)
+    if (!response.ok) {
+      await response.body?.cancel()
+      if (response.status === 401)
+        throw new OfficialRequestError('登录已失效 HTTP 401,请在 Codex 中重新登录')
+      if (response.status === 403)
+        throw new OfficialRequestError('访问被拒绝 HTTP 403,请检查账号权限或网络访问限制')
+      if (response.status === 407)
+        throw new OfficialRequestError('代理需要认证 HTTP 407,请检查系统代理设置')
+      if (response.status === 429)
+        throw new OfficialRequestError('官方接口请求过于频繁 HTTP 429,请稍后刷新或增加刷新间隔')
+      const retryable =
+        [500, 502, 503, 504].includes(response.status) && !response.headers.has('retry-after')
+      throw new OfficialRequestError(`官方额度接口返回 HTTP ${response.status}`, retryable)
+    }
+    const body = await response.text()
+    try {
+      return body.trim() ? JSON.parse(body) : {}
+    } catch {
+      throw new OfficialRequestError('官方额度接口返回内容不是有效 JSON,请检查网络登录页或代理拦截')
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new OfficialRequestError(
+        `官方额度接口请求超时（${Math.round(timeoutMs / 1000)}秒）,请检查系统代理及网络连接`,
+        true
+      )
+    }
+    if (error instanceof OfficialRequestError) throw error
+    // 只保留网络错误码，避免错误对象中的请求地址、认证信息进入界面。
+    const code =
+      error instanceof Error ? error.message.match(/(?:net::)?ERR_[A-Z0-9_]+/)?.[0] : undefined
+    if (code && /CERT|SSL/.test(code))
+      throw new OfficialRequestError(`TLS/证书验证失败（${code}）,请检查系统时间或网络证书配置`)
+    if (code && /PROXY|TUNNEL/.test(code))
+      throw new OfficialRequestError(`系统代理连接失败（${code}）,请确认代理服务及端口可用`, true)
+    if (code && /NAME_NOT_RESOLVED|DNS/.test(code))
+      throw new OfficialRequestError(`DNS解析失败（${code}）,请检查网络或DNS设置`, true)
+    throw new OfficialRequestError(
+      `官方额度网络连接失败（${code ?? 'NETWORK_ERROR'}）,请检查网络及系统代理`,
+      true
     )
-    request.on('close', () => clearTimeout(timeout))
-    request.on('error', reject)
-    request.end()
-  })
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export function parseOfficialRateLimits(
