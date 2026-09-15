@@ -1,21 +1,13 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import ts from 'typescript'
+import { loadTs } from './load-ts.mjs'
 
-function moduleUrl(source) {
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext }
-  })
-  return `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`
-}
-
-const sharedUrl = moduleUrl(readFileSync(new URL('../src/shared/capsule.ts', import.meta.url), 'utf8'))
-const { normalizeSettings, selectPrimaryRateLimit } = await import(sharedUrl)
-const { createTrayBitmap, getTrayIconState } = await import(moduleUrl(
-  readFileSync(new URL('../src/main/services/tray-icon.ts', import.meta.url), 'utf8')
-    .replace('../../shared/capsule', sharedUrl)
-))
+const { normalizeSettings, selectPrimaryRateLimit } = await import(
+  loadTs(new URL('../src/shared/capsule.ts', import.meta.url))
+)
+const { createTrayBitmap, getTrayIconState } = await import(
+  loadTs(new URL('../src/main/services/tray-icon.ts', import.meta.url))
+)
 
 test('display mode survives saved settings and accepts older settings without a mode', () => {
   for (const displayMode of ['floating', 'tray']) {
@@ -54,12 +46,17 @@ test('tray preserves the selected quota, percentage mode and stale/reset states'
   }
   assert.deepEqual(getTrayIconState(snapshot, settings, now), { text: '10', color: '#b91c1c' })
   assert.deepEqual(getTrayIconState({ ...snapshot, rateLimits: [weekly] }, settings, now), {
-    text: '80', color: '#166534'
+    text: '80',
+    color: '#166534'
   })
   assert.deepEqual(getTrayIconState(snapshot, { ...settings, percentageMode: 'used' }, now), {
-    text: '90', color: '#b91c1c'
+    text: '90',
+    color: '#b91c1c'
   })
-  assert.equal(getTrayIconState({ ...snapshot, rateLimitSource: 'cache' }, settings, now).color, '#475569')
+  assert.equal(
+    getTrayIconState({ ...snapshot, rateLimitSource: 'cache' }, settings, now).color,
+    '#475569'
+  )
   assert.equal(getTrayIconState(snapshot, settings, now + 91000).color, '#475569')
   short.resetsAt = new Date(now).toISOString()
   assert.equal(getTrayIconState(snapshot, settings, now).text, '--')

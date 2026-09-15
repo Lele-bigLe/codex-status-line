@@ -1099,6 +1099,53 @@ body {
   justify-content: space-between;
   margin-bottom: 12px;
 }
+.usage-estimate {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 12px;
+}
+.usage-estimate__note {
+  margin: 8px 0;
+  color: var(--panel-muted);
+  line-height: 1.6;
+}
+.usage-estimate__scope {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.6;
+}
+.usage-estimate__scope input { margin-top: 4px; accent-color: #50d67c; }
+.usage-estimate__reference, .usage-estimate__prices label { display: grid; gap: 6px; }
+.usage-estimate select, .usage-estimate__prices input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px;
+  background: #17212d;
+  color: var(--panel-text);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+}
+.usage-estimate :focus-visible { outline: 2px solid #50d67c; outline-offset: 2px; }
+.usage-estimate__window, .usage-estimate__model { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--panel-line); }
+.usage-estimate dl { margin: 0; }
+.usage-estimate dl > div { display: flex; justify-content: space-between; gap: 10px; margin: 8px 0; }
+.usage-estimate dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.usage-estimate dt { color: var(--panel-muted); }
+.usage-estimate__warning { color: #e6b151; line-height: 1.6; }
+.usage-estimate summary { cursor: pointer; margin-top: 14px; }
+.usage-estimate__model strong { overflow-wrap: anywhere; }
+.usage-estimate__model > span { float: right; }
+.usage-estimate__model p { margin: 6px 0; color: var(--panel-muted); }
+.usage-estimate a { color: #50d67c; }
+.usage-estimate__prices { display: grid; gap: 10px; margin-top: 14px; }
+.usage-estimate__prices > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.usage-estimate__prices button { padding: 8px; border: 1px solid var(--panel-line); border-radius: 6px; background: #213c30; color: var(--panel-text); cursor: pointer; }
+.usage-estimate__prices button:disabled { opacity: 0.5; cursor: wait; }
+
 .quota-heading h3 {
   font-size: 14px;
   font-weight: 600;

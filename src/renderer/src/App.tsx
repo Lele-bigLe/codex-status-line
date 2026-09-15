@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { UsageEstimate } from './components/UsageEstimate'
 import {
   CAPSULE_WINDOW_SIZE,
   DEFAULT_SETTINGS,
@@ -703,6 +704,8 @@ function App(): React.JSX.Element {
                   </div>
                 </div>
               ) : null}
+
+              <UsageEstimate snapshot={snapshot} settings={settings} now={now} />
 
               <details className="connection-details">
                 <summary>

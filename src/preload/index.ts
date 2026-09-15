@@ -13,6 +13,7 @@ import type {
 const CHANNELS = {
   bootstrap: 'codex-status:bootstrap',
   refresh: 'codex-status:refresh',
+  confirmEstimationScope: 'codex-status:confirm-estimation-scope',
   updateSettings: 'codex-status:update-settings',
   closePanel: 'codex-status:close-panel',
   openPanel: 'codex-status:open-panel',
@@ -26,6 +27,8 @@ const CHANNELS = {
 const api: CodexStatusApi = {
   bootstrap: () => ipcRenderer.invoke(CHANNELS.bootstrap) as Promise<BootstrapPayload>,
   refreshStatus: () => ipcRenderer.invoke(CHANNELS.refresh) as Promise<UsageSnapshot>,
+  confirmEstimationScope: (confirmed) =>
+    ipcRenderer.invoke(CHANNELS.confirmEstimationScope, confirmed),
   updateSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.invoke(CHANNELS.updateSettings, patch) as Promise<PreferencesPayload>,
   closePanel: () => ipcRenderer.invoke(CHANNELS.closePanel) as Promise<void>,

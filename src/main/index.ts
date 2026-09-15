@@ -53,6 +53,7 @@ import {
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
 import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
+import { UsageEstimator } from './services/estimation'
 
 function getAutoUpdater(): AppUpdater {
   const { autoUpdater } = electronUpdater
@@ -64,6 +65,7 @@ const autoUpdater = getAutoUpdater()
 const CHANNELS = {
   bootstrap: 'codex-status:bootstrap',
   refresh: 'codex-status:refresh',
+  confirmEstimationScope: 'codex-status:confirm-estimation-scope',
   updateSettings: 'codex-status:update-settings',
   closePanel: 'codex-status:close-panel',
   openPanel: 'codex-status:open-panel',
@@ -109,6 +111,7 @@ let persistedState: PersistedState = {
   panel: {}
 }
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
+let usageEstimator = new UsageEstimator()
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -327,6 +330,17 @@ app.on('before-quit', () => {
 })
 
 function registerIpcHandlers(): void {
+  ipcMain.handle(CHANNELS.confirmEstimationScope, async (_, confirmed: unknown) => {
+    if (typeof confirmed !== 'boolean') throw new Error('Invalid estimation scope')
+    await refreshPromise
+    const lookup = await readOfficialCodexCredentials()
+    if (!lookup.credentials || lookup.credentials.key !== currentAccountKey) {
+      throw new Error('Account changed; refresh before starting calibration')
+    }
+    usageEstimator = new UsageEstimator(confirmed)
+    await refreshStatus()
+    return currentSnapshot
+  })
   ipcMain.handle(CHANNELS.bootstrap, async (event) => {
     return {
       settings: persistedState.settings,
@@ -361,6 +375,15 @@ function registerIpcHandlers(): void {
 
     queuePersistState()
     syncRefreshTimer()
+    if (
+      JSON.stringify(previousSettings.estimationPrices) !==
+      JSON.stringify(nextSettings.estimationPrices)
+    ) {
+      usageEstimator = new UsageEstimator()
+      currentSnapshot = { ...currentSnapshot, estimation: undefined }
+      broadcastSnapshot()
+      void refreshStatus()
+    }
     if (previousSettings.displayMode !== nextSettings.displayMode) {
       if (nextSettings.displayMode === 'floating') {
         showWindow()
@@ -909,6 +932,7 @@ function watchCodexAuthFile(): void {
 function syncAccountIdentity(accountKey: string | undefined): void {
   if (currentAccountKey === accountKey) return
   currentAccountKey = accountKey
+  usageEstimator = new UsageEstimator()
   clearQuotaCache()
   currentSnapshot = { ...createEmptySnapshot(), isRefreshing: true }
   broadcastSnapshot()
@@ -967,6 +991,16 @@ async function refreshStatus(options: { forceCredentialCheck?: boolean } = {}): 
       if (revision !== credentialRevision) return
       syncAccountIdentity(lookup.credentials?.key)
       const nextSnapshot = await collectUsageSnapshot(lookup)
+      if (revision !== credentialRevision) return
+      if (lookup.credentials && nextSnapshot.authPath) {
+        const estimator = usageEstimator
+        const estimation = await estimator.update(nextSnapshot, persistedState.settings)
+        if (estimator !== usageEstimator) {
+          refreshQueued = true
+          return
+        }
+        nextSnapshot.estimation = estimation
+      }
       if (revision === credentialRevision) currentSnapshot = nextSnapshot
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

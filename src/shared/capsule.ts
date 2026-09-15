@@ -1,3 +1,6 @@
+import type { UsageEstimation } from './estimation'
+import { normalizeModelPrices, type ModelPrice } from './estimation'
+
 export type PercentageMode = 'remaining' | 'used'
 export type RefreshMode = 'auto' | 'manual'
 export type LocaleCode = 'zh-CN' | 'en-US'
@@ -36,6 +39,8 @@ export interface UsageSnapshot {
   generatedAt?: string
   lastSuccessAt?: string
   account?: { label: string; workspace: string }
+  plan?: string
+  estimation?: UsageEstimation
   authPath?: string
   rateLimits: RateLimitWindowSnapshot[]
   rateLimitSource: RateLimitSource
@@ -45,6 +50,7 @@ export interface UsageSnapshot {
 }
 
 export interface AppSettings {
+  estimationPrices: Record<string, ModelPrice>
   displayMode: 'floating' | 'tray'
   refreshMode: RefreshMode
   refreshIntervalSeconds: number
@@ -101,6 +107,7 @@ export interface RendererCommandPayload {
 export interface CodexStatusApi {
   bootstrap: () => Promise<BootstrapPayload>
   refreshStatus: () => Promise<UsageSnapshot>
+  confirmEstimationScope: (confirmed: boolean) => Promise<UsageSnapshot>
   updateSettings: (patch: Partial<AppSettings>) => Promise<PreferencesPayload>
   closePanel: () => Promise<void>
   openPanel: () => Promise<void>
@@ -136,6 +143,7 @@ export const PANEL_WINDOW_SIZE = {
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  estimationPrices: {},
   displayMode: 'tray',
   refreshMode: 'auto',
   refreshIntervalSeconds: DEFAULT_REFRESH_INTERVAL_SECONDS,
@@ -164,6 +172,7 @@ export function createEmptySnapshot(): UsageSnapshot {
 
 export function normalizeSettings(input: Partial<AppSettings> | undefined): AppSettings {
   return {
+    estimationPrices: normalizeModelPrices(input?.estimationPrices),
     displayMode:
       input?.displayMode === 'floating' || input?.displayMode === 'tray'
         ? input.displayMode

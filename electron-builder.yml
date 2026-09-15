@@ -1,5 +1,6 @@
 appId: com.openai.codex-status
 productName: codex-status
+artifactName: ${name}-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: build
 files:
@@ -12,6 +13,11 @@ files:
 asarUnpack:
   - resources/**
 win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - ia32
   executableName: codex-status
   icon: build/icon-1.png
   compression: normal
@@ -19,7 +25,7 @@ win:
     - zh-CN
     - en-US
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ${name}-${version}-win-x86-x64-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -38,16 +44,12 @@ mac:
     - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
   notarize: false
-dmg:
-  artifactName: ${name}-${version}.${ext}
 linux:
   target:
     - AppImage
     - deb
   maintainer: electronjs.org
   category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
 npmRebuild: false
 publish:
   provider: github

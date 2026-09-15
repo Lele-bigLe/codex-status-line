@@ -55,6 +55,7 @@ export async function collectUsageSnapshot(
   }
   if (cachedSnapshot?.key !== credentials.key) clearQuotaCache()
   let rateLimits: UsageSnapshot['rateLimits'] | undefined
+  let plan: string | undefined
   let issue: string | undefined
   try {
     const response = await requestJson(
@@ -63,6 +64,7 @@ export async function collectUsageSnapshot(
       OFFICIAL_QUOTA_TIMEOUT_MS
     )
     const body = getRecord(response)
+    plan = getString(body?.plan_type)
     const responseAccount = getString(body?.account_id ?? body?.accountId)
     if (responseAccount && responseAccount !== credentials.accountId) {
       clearQuotaCache()
@@ -96,6 +98,7 @@ export async function collectUsageSnapshot(
       generatedAt,
       lastSuccessAt: generatedAt,
       rateLimits,
+      plan,
       rateLimitSource: 'official'
     }
     cachedSnapshot = { key: credentials.key, snapshot }
@@ -108,6 +111,7 @@ export async function collectUsageSnapshot(
       ? {
           available: cached.available,
           rateLimits: cached.rateLimits,
+          plan: cached.plan,
           rateLimitSource: 'cache' as const,
           lastSuccessAt: cached.lastSuccessAt
         }
