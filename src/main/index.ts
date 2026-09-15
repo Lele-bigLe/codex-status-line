@@ -52,6 +52,7 @@ import {
   resolveCodexAuthPath
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
+import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
 
 function getAutoUpdater(): AppUpdater {
   const { autoUpdater } = electronUpdater
@@ -88,6 +89,8 @@ let panelWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let trayMenuKey: string | undefined
 let trayTooltip: string | undefined
+let trayImageKey: string | undefined
+let trayTimer: NodeJS.Timeout | undefined
 let dispatchChild: ChildProcess | undefined
 let refreshTimer: NodeJS.Timeout | undefined
 let persistTimer: NodeJS.Timeout | undefined
@@ -119,8 +122,10 @@ if (!hasSingleInstanceLock) {
       return
     }
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (persistedState.settings.displayMode === 'floating') {
       showWindow()
+    } else {
+      openPanelWindow('details')
     }
   })
 }
@@ -151,7 +156,7 @@ function createCapsuleWindow(): BrowserWindow {
   })
 
   window.on('ready-to-show', () => {
-    window.show()
+    if (persistedState.settings.displayMode === 'floating') window.show()
   })
 
   window.on('move', () => {
@@ -301,13 +306,11 @@ if (hasSingleInstanceLock) {
     void refreshStatus()
 
     app.on('activate', function () {
-      if (mainWindow === null) {
-        mainWindow = createCapsuleWindow()
-        refreshTrayMenu()
-        return
+      if (persistedState.settings.displayMode === 'floating') {
+        showWindow()
+      } else {
+        openPanelWindow('details')
       }
-
-      showWindow()
     })
   })
 }
@@ -318,6 +321,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  clearInterval(trayTimer)
   clearRefreshTimer()
   clearCodexAuthWatcher()
 })
@@ -357,6 +361,13 @@ function registerIpcHandlers(): void {
 
     queuePersistState()
     syncRefreshTimer()
+    if (previousSettings.displayMode !== nextSettings.displayMode) {
+      if (nextSettings.displayMode === 'floating') {
+        showWindow()
+      } else {
+        mainWindow?.hide()
+      }
+    }
     refreshTrayMenu()
     broadcastPreferences()
 
@@ -394,15 +405,37 @@ function createTray(): void {
   tray = new Tray(image.isEmpty() ? trayIcon : image.resize({ width: 16, height: 16 }))
   trayMenuKey = undefined
   trayTooltip = undefined
+  trayImageKey = undefined
   tray.on('click', () => {
-    toggleWindowVisibility()
+    if (persistedState.settings.displayMode === 'floating') {
+      toggleWindowVisibility()
+    } else {
+      openDetailsFromTray()
+    }
   })
+  tray.on('mouse-enter', refreshTrayMenu)
   refreshTrayMenu()
+  trayTimer = setInterval(refreshTrayMenu, 15000)
 }
 
 function refreshTrayMenu(): void {
-  if (!tray) {
+  if (!tray || isQuitting) {
     return
+  }
+
+  if (process.platform === 'win32') {
+    const { text, color } = getTrayIconState(currentSnapshot, persistedState.settings)
+    const imageKey = `${text}:${color}`
+    if (imageKey !== trayImageKey) {
+      tray.setImage(
+        nativeImage.createFromBitmap(createTrayBitmap(text, color), {
+          width: 32,
+          height: 32,
+          scaleFactor: 2
+        })
+      )
+      trayImageKey = imageKey
+    }
   }
 
   const tooltip = buildTrayTooltip()
@@ -486,7 +519,7 @@ function getTrayLabels(): Record<
     return {
       refresh: 'Refresh',
       dispatch: 'Dispatch',
-      toggle: 'Show/Hide',
+      toggle: 'Show/Hide Floating Window',
       details: 'Details',
       settings: 'Settings',
       checkForUpdates: 'Check for Updates',
@@ -497,7 +530,7 @@ function getTrayLabels(): Record<
   return {
     refresh: '刷新',
     dispatch: '投送',
-    toggle: '显示/隐藏',
+    toggle: '显示/隐藏悬浮窗',
     details: '详情',
     settings: '设置',
     checkForUpdates: '检查更新',
@@ -511,7 +544,12 @@ function buildTrayTooltip(): string {
     ? persistedState.settings.locale === 'en-US'
       ? ' · refreshing'
       : ' · 刷新中'
-    : currentSnapshot.rateLimitSource === 'cache'
+    : currentSnapshot.rateLimitSource === 'cache' ||
+        Boolean(
+          currentSnapshot.lastSuccessAt &&
+          Date.now() - Date.parse(currentSnapshot.lastSuccessAt) >
+            Math.max(90000, persistedState.settings.refreshIntervalSeconds * 2000)
+        )
       ? persistedState.settings.locale === 'en-US'
         ? ' · saved data'
         : ' · 历史数据'
@@ -523,7 +561,15 @@ function buildTrayTooltip(): string {
       : `Codex 暂无额度数据${suffix}`
   }
 
-  return `${['Codex', ...windowTexts].join('  ')}${suffix}`
+  const mode =
+    persistedState.settings.percentageMode === 'used'
+      ? persistedState.settings.locale === 'en-US'
+        ? 'Used'
+        : '已用'
+      : persistedState.settings.locale === 'en-US'
+        ? 'Remaining'
+        : '剩余'
+  return [`Codex · ${mode}${suffix}`, ...windowTexts].join('\n')
 }
 
 function formatTrayWindowText(windowState: UsageSnapshot['rateLimits'][number]): string {
@@ -532,9 +578,22 @@ function formatTrayWindowText(windowState: UsageSnapshot['rateLimits'][number]):
       ? windowState.usedPercent
       : windowState.remainingPercent
 
-  return percentage === undefined
-    ? `${windowState.label} --`
-    : `${windowState.label} ${Math.round(percentage)}%`
+  const value = percentage === undefined ? '--' : `${Math.round(percentage)}%`
+  const isEnglish = persistedState.settings.locale === 'en-US'
+  const resetAt = windowState.resetsAt ? Date.parse(windowState.resetsAt) : NaN
+  if (!Number.isFinite(resetAt)) {
+    return `${windowState.label} ${value} · ${isEnglish ? 'Reset unknown' : '重置时间未知'}`
+  }
+  const minutes = Math.ceil((resetAt - Date.now()) / 60000)
+  if (minutes <= 0) {
+    return `${windowState.label} -- · ${isEnglish ? 'Awaiting reset confirmation' : '等待重置确认'}`
+  }
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const countdown = `${days ? `${days}d ` : ''}${hours}h ${minutes % 60}m`
+  const date = new Date(resetAt)
+  const resetTime = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${windowState.label} ${value} · ${countdown} · ${isEnglish ? 'Reset' : '重置'} ${resetTime}`
 }
 
 function toggleWindowVisibility(): void {
@@ -818,6 +877,7 @@ async function checkForUpdates(): Promise<void> {
 
 function prepareToQuit(): void {
   isQuitting = true
+  clearInterval(trayTimer)
   clearRefreshTimer()
   clearCodexAuthWatcher()
   tray?.destroy()

@@ -35,6 +35,7 @@ export interface UsageSnapshot {
 }
 
 export interface AppSettings {
+  displayMode: 'floating' | 'tray'
   refreshMode: RefreshMode
   refreshIntervalSeconds: number
   percentageMode: PercentageMode
@@ -125,6 +126,7 @@ export const PANEL_WINDOW_SIZE = {
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  displayMode: 'tray',
   refreshMode: 'auto',
   refreshIntervalSeconds: DEFAULT_REFRESH_INTERVAL_SECONDS,
   percentageMode: 'remaining',
@@ -152,6 +154,10 @@ export function createEmptySnapshot(): UsageSnapshot {
 
 export function normalizeSettings(input: Partial<AppSettings> | undefined): AppSettings {
   return {
+    displayMode:
+      input?.displayMode === 'floating' || input?.displayMode === 'tray'
+        ? input.displayMode
+        : DEFAULT_SETTINGS.displayMode,
     refreshMode: isRefreshMode(input?.refreshMode)
       ? input.refreshMode
       : DEFAULT_SETTINGS.refreshMode,

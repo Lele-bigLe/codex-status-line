@@ -48,6 +48,9 @@ const COPY = {
     customInterval: '自定义秒数',
     custom: '自定义',
     percentageMode: '百分比口径',
+    displayMode: '显示方式',
+    floatingMode: '悬浮状态条',
+    trayMode: '托盘点击详情',
     language: '语种',
     launchAtLogin: '开机自启动',
     groupRefresh: '刷新',
@@ -101,6 +104,9 @@ const COPY = {
     customInterval: 'Custom seconds',
     custom: 'Custom',
     percentageMode: 'Metric mode',
+    displayMode: 'Display mode',
+    floatingMode: 'Floating bar',
+    trayMode: 'Tray details',
     language: 'Language',
     launchAtLogin: 'Open at login',
     groupRefresh: 'Refresh',
@@ -824,6 +830,19 @@ function App(): React.JSX.Element {
 
                 <div className="settings-section">
                   <p className="settings-section__title">{copy.groupDisplay}</p>
+                  <SettingField label={copy.displayMode}>
+                    <SegmentedControl
+                      onChange={(value) => {
+                        void handleSettingsPatch({ displayMode: value as AppSettings['displayMode'] })
+                      }}
+                      options={[
+                        { label: copy.floatingMode, value: 'floating' },
+                        { label: copy.trayMode, value: 'tray' }
+                      ]}
+                      value={settings.displayMode}
+                    />
+                  </SettingField>
+
                   <SettingField label={copy.percentageMode}>
                     <SegmentedControl
                       onChange={(value) => {
