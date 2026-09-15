@@ -19,6 +19,16 @@ export interface RateLimitWindowSnapshot {
   observedAt?: string
 }
 
+export function selectPrimaryRateLimit(
+  windows: RateLimitWindowSnapshot[]
+): RateLimitWindowSnapshot | undefined {
+  return (
+    windows.find((window) => window.windowMinutes === 300 || window.label === '5h') ??
+    windows.find((window) => window.windowMinutes === 10080 || window.label === '7d') ??
+    windows[0]
+  )
+}
+
 export interface UsageSnapshot {
   available: boolean
   isRefreshing: boolean

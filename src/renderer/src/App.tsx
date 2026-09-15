@@ -7,6 +7,7 @@ import {
   MAX_REFRESH_INTERVAL_SECONDS,
   MIN_REFRESH_INTERVAL_SECONDS,
   createEmptySnapshot,
+  selectPrimaryRateLimit,
   type AppSettings,
   type CapsuleDragMovePayload,
   type LocaleCode,
@@ -291,9 +292,7 @@ function App(): React.JSX.Element {
         : undefined
   const rateLimitWindows = snapshot.rateLimits
   const rateLimitCount = rateLimitWindows.length
-  const primaryWindow =
-    rateLimitWindows.find((window) => window.windowMinutes === 10080 || window.label === '7d') ??
-    rateLimitWindows[0]
+  const primaryWindow = selectPrimaryRateLimit(rateLimitWindows)
   const capsuleDisplayPercent =
     settings.percentageMode === 'used' ? primaryWindow?.usedPercent : primaryWindow?.remainingPercent
   const capsuleTone = resolveMetricTone(capsuleDisplayPercent, settings.percentageMode)
@@ -579,7 +578,7 @@ function App(): React.JSX.Element {
             tabIndex={canRefresh ? 0 : -1}
           >
             <div className="status-line" aria-hidden="true">
-              <strong>{primaryWindow?.label ?? '7d'}</strong>
+              <strong>{primaryWindow?.label ?? '--'}</strong>
               <span className="status-line__separator">|</span>
               <span title={formatAbsoluteDate(primaryWindow?.resetsAt, settings.locale)}>
                 {formatCapsuleResetTime(primaryWindow?.resetsAt, settings.locale)}

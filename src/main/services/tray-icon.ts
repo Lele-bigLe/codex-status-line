@@ -1,4 +1,4 @@
-import type { AppSettings, UsageSnapshot } from '../../shared/capsule'
+import { selectPrimaryRateLimit, type AppSettings, type UsageSnapshot } from '../../shared/capsule'
 
 const DIGITS: Record<string, string[]> = {
   '0': ['111', '101', '101', '101', '111'],
@@ -19,9 +19,7 @@ export function getTrayIconState(
   settings: AppSettings,
   now = Date.now()
 ): { text: string; color: string } {
-  const primary =
-    snapshot.rateLimits.find((window) => window.windowMinutes === 10080 || window.label === '7d') ??
-    snapshot.rateLimits[0]
+  const primary = selectPrimaryRateLimit(snapshot.rateLimits)
   const percent = settings.percentageMode === 'used' ? primary?.usedPercent : primary?.remainingPercent
   const expired = Boolean(primary?.resetsAt && Date.parse(primary.resetsAt) <= now)
   if (
