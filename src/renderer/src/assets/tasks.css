@@ -1,0 +1,483 @@
+.app-shell--tasks {
+  display: flex;
+  --glass-wash: linear-gradient(
+    135deg,
+    rgba(222, 239, 249, 0.2),
+    rgba(255, 255, 255, 0.04) 55%,
+    rgba(250, 234, 216, 0.14)
+  );
+  /* 透明原生窗口无法靠 CSS 模糊桌面，底色需足够实以避免背景文字串入。 */
+  --glass-base: rgba(248, 250, 252, 0.96);
+  --glass-card: rgba(255, 255, 255, 0.55);
+  --glass-line: rgba(103, 124, 137, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.65);
+  --monitor-blue: #407f9c;
+  --monitor-green: #4b8066;
+  --monitor-red: #b56369;
+  --monitor-gray: #7c8791;
+}
+.app-shell--tasks[data-theme='dark'] {
+  --glass-wash: linear-gradient(
+    135deg,
+    rgba(64, 87, 113, 0.14),
+    rgba(27, 33, 44, 0.04) 55%,
+    rgba(98, 81, 63, 0.08)
+  );
+  --glass-base: rgba(25, 30, 39, 0.96);
+  --glass-card: rgba(211, 224, 240, 0.055);
+  --glass-line: rgba(191, 213, 236, 0.1);
+  --glass-highlight: rgba(214, 229, 247, 0.13);
+  --monitor-blue: #8fbcd3;
+  --monitor-green: #99cbb0;
+  --monitor-red: #e5a0a5;
+  --monitor-gray: #a1adbb;
+}
+.app-shell--tasks[data-native-glass='true'] {
+  --glass-base: rgba(248, 250, 252, 0.36);
+}
+.app-shell--tasks[data-theme='dark'][data-native-glass='true'] {
+  --glass-base: rgba(25, 30, 39, 0.4);
+}
+.panel.panel--tasks,
+.monitor-peek {
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  clip-path: inset(0 round 12px);
+  overflow: hidden;
+  background: var(--glass-wash), var(--glass-base);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+  color: var(--panel-text);
+}
+.monitor-popup[hidden] {
+  display: none;
+}
+.monitor-peek {
+  display: flex;
+  border-radius: 10px;
+  clip-path: inset(0 round 10px);
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  overflow: hidden;
+}
+.monitor-peek-drag {
+  -webkit-app-region: drag;
+  flex: 0 0 20px;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--panel-muted);
+  opacity: 0.5;
+  cursor: grab;
+}
+.monitor-peek-drag svg {
+  width: 9px;
+  height: 13px;
+}
+.monitor-peek-summary {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  font-size: 11px;
+  cursor: pointer;
+}
+.monitor-peek-summary i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state, var(--monitor-gray));
+  flex-shrink: 0;
+}
+.monitor-peek-summary strong {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-size: 12px;
+}
+.monitor-peek-summary span {
+  color: var(--panel-text-2);
+  border-left: 1px solid var(--glass-line);
+  padding-left: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.monitor-peek-close {
+  -webkit-app-region: no-drag;
+  display: grid;
+  place-items: center;
+  flex: 0 0 26px;
+  height: 100%;
+  color: var(--panel-muted);
+  cursor: pointer;
+}
+.monitor-peek-close svg {
+  width: 12px;
+  height: 12px;
+}
+.monitor-peek-close:hover {
+  background: var(--glass-card);
+  color: var(--panel-text);
+}
+.monitor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 46px;
+  padding: 0 12px 0 16px;
+  -webkit-app-region: drag;
+}
+.monitor-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--panel-muted);
+  font-size: 11px;
+}
+.monitor-wordmark {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--panel-text);
+  letter-spacing: -0.03em;
+}
+.monitor-window-actions {
+  display: flex;
+  gap: 2px;
+}
+.monitor-window-actions .icon-button {
+  width: 25px;
+  height: 25px;
+  border-radius: 5px;
+  color: var(--panel-muted);
+}
+.monitor-window-actions .icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+.monitor-window-actions button[aria-pressed='true'] {
+  background: var(--glass-card);
+  color: var(--panel-text);
+}
+[data-status='running'] {
+  --state: var(--monitor-blue);
+}
+[data-status='completed'] {
+  --state: var(--monitor-green);
+}
+[data-status='interrupted'] {
+  --state: var(--monitor-red);
+}
+[data-status='unknown'] {
+  --state: var(--monitor-gray);
+}
+.monitor-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px;
+  margin: 0 10px 10px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid var(--glass-line);
+  flex-shrink: 0;
+}
+.monitor-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  min-height: 26px;
+  padding: 3px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--panel-muted);
+}
+.monitor-stat span,
+.monitor-stat strong {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  line-height: 18px;
+  font-size: 11px;
+}
+.monitor-stat:hover {
+  background: var(--glass-card);
+}
+.monitor-stat[aria-pressed='true'] {
+  color: var(--panel-text);
+  background: var(--glass-card);
+  box-shadow: inset 0 -2px var(--state);
+}
+.monitor-stat i {
+  width: 4px;
+  height: 4px;
+  background: var(--state);
+  border-radius: 50%;
+}
+.monitor-stat strong {
+  font-size: 11px;
+  color: var(--panel-text-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.monitor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 10px 2px;
+  overscroll-behavior: contain;
+}
+.monitor-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.monitor-scroll::-webkit-scrollbar-thumb {
+  background: var(--panel-scroll);
+  border-radius: 4px;
+}
+.monitor-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.monitor-task {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--glass-card);
+  padding: 11px 11px 10px;
+  box-shadow: inset 0 1px var(--glass-highlight), 0 1px 3px #00000006;
+}
+.monitor-task:hover,
+.monitor-task:focus-within {
+  border-color: var(--glass-line);
+}
+.monitor-task-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.monitor-state-icon {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 13px;
+  color: var(--state);
+  background: color-mix(in srgb, var(--state) 10%, transparent);
+}
+.monitor-task-heading strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.monitor-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--state);
+}
+.monitor-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 27px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--panel-muted);
+  font-variant-numeric: tabular-nums;
+}
+.monitor-project {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monitor-meta-dot {
+  opacity: 0.5;
+}
+.monitor-row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 9px;
+}
+.monitor-row-actions button {
+  font-size: 10px;
+  color: var(--panel-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.monitor-row-actions button:hover,
+.monitor-row-actions button[aria-pressed='true'] {
+  color: var(--panel-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.monitor-row-actions button:disabled {
+  opacity: 0.5;
+}
+.monitor-task-details {
+  margin: 9px 0 0 27px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-line);
+  color: var(--panel-muted);
+  font-size: 10px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.monitor-task-details button {
+  margin-top: 5px;
+  color: var(--panel-text-2);
+  cursor: pointer;
+}
+.monitor-removed {
+  flex-basis: 100%;
+  font-size: 10px;
+  color: var(--panel-muted);
+}
+.monitor-removed summary {
+  cursor: pointer;
+  padding: 4px 0;
+  width: fit-content;
+  margin-left: auto;
+}
+.monitor-removed summary:hover,
+.monitor-removed[open] summary {
+  color: var(--panel-text);
+}
+.monitor-removed-list {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  max-height: min(160px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass-wash), var(--panel-bg);
+  box-shadow: 0 4px 16px #00000014;
+  z-index: 1;
+}
+.monitor-removed-list > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+}
+.monitor-removed span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monitor-removed button {
+  cursor: pointer;
+  color: var(--panel-text-2);
+  flex-shrink: 0;
+}
+.monitor-footer {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 8px;
+  flex-shrink: 0;
+  padding: 10px 15px;
+  border-top: 1px solid var(--glass-line);
+  color: var(--panel-muted);
+  font-size: 10px;
+}
+.monitor-footer > span:first-of-type {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.monitor-footer i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--monitor-gray);
+}
+.monitor-footer .is-online i {
+  background: var(--monitor-green);
+}
+.monitor-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--panel-muted);
+}
+.monitor-empty > span {
+  font-size: 23px;
+  color: var(--monitor-blue);
+}
+.monitor-empty h3 {
+  margin: 8px 0 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--panel-text-2);
+}
+.monitor-empty p {
+  font-size: 10px;
+  line-height: 1.6;
+}
+.task-help {
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--panel-muted);
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.panel--tasks button:focus-visible,
+.monitor-removed summary:focus-visible,
+.monitor-peek button:focus-visible {
+  outline: 2px solid var(--panel-accent);
+  outline-offset: -2px;
+}
+@media (max-width: 350px) {
+  .monitor-summary {
+    gap: 4px;
+    margin-inline: 10px;
+  }
+  .monitor-stat {
+    gap: 3px;
+    font-size: 9px;
+  }
+  .monitor-project {
+    max-width: 65px;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .app-shell--tasks[data-native-glass] {
+    --glass-base: var(--panel-bg);
+  }
+}
+/* 高对比度模式使用系统颜色。 */
+@media (forced-colors: active) {
+  .panel.panel--tasks,
+  .monitor-peek {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

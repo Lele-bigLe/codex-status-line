@@ -24,12 +24,20 @@ const CHANNELS = {
 } as const
 
 const api: CodexStatusApi = {
+  setTaskMuted: (id, muted) => ipcRenderer.invoke('codex-status:mute-task', id, muted),
+  removeTask: (id) => ipcRenderer.invoke('codex-status:remove-task', id),
+  restoreTask: (threadId) => ipcRenderer.invoke('codex-status:restore-task', threadId),
+  setTaskWindowPinned: (pinned) => ipcRenderer.invoke('codex-status:pin-task-window', pinned),
+  onTaskWindowUpdated: (listener) => subscribe('codex-status:task-window-updated', listener),
+  getTasks: () => ipcRenderer.invoke('codex-status:get-tasks'),
+  copyTaskSession: (id) => ipcRenderer.invoke('codex-status:copy-task-session', id),
+  onTasksUpdated: (listener) => subscribe('codex-status:tasks-updated', listener),
   bootstrap: () => ipcRenderer.invoke(CHANNELS.bootstrap) as Promise<BootstrapPayload>,
   refreshStatus: () => ipcRenderer.invoke(CHANNELS.refresh) as Promise<UsageSnapshot>,
   updateSettings: (patch: Partial<AppSettings>) =>
     ipcRenderer.invoke(CHANNELS.updateSettings, patch) as Promise<PreferencesPayload>,
   closePanel: () => ipcRenderer.invoke(CHANNELS.closePanel) as Promise<void>,
-  openPanel: () => ipcRenderer.invoke(CHANNELS.openPanel) as Promise<void>,
+  openPanel: (view) => ipcRenderer.invoke(CHANNELS.openPanel, view) as Promise<void>,
   moveCapsuleWindow: (payload: CapsuleDragMovePayload) =>
     ipcRenderer.invoke(CHANNELS.moveCapsuleWindow, payload) as Promise<WindowPreferences>,
   finishCapsuleWindowDrag: () =>

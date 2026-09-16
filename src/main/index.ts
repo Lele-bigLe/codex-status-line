@@ -1,5 +1,6 @@
 import {
   app,
+  clipboard,
   shell,
   BrowserWindow,
   dialog,
@@ -8,12 +9,13 @@ import {
   Notification,
   Tray,
   nativeImage,
+  nativeTheme,
   screen,
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
 import { watchFile, unwatchFile } from 'node:fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import electronUpdater, { type AppUpdater } from 'electron-updater'
 import appIcon from '../../build/icon.png?asset'
@@ -47,6 +49,15 @@ import {
 } from './services/quota'
 import { loadPersistedState, savePersistedState } from './services/state'
 import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
+import { TaskMonitor } from './services/tasks'
+import {
+  taskWindowBounds,
+  taskNotificationContent,
+  taskHoverExpanded,
+  type TaskWindowState,
+  type TasksSnapshot,
+  type TaskRecord
+} from '../shared/tasks'
 
 function getAutoUpdater(): AppUpdater {
   const { autoUpdater } = electronUpdater
@@ -70,6 +81,13 @@ const CHANNELS = {
 
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
+let tasksWindow: BrowserWindow | null = null
+let taskWindowState: TaskWindowState = { expanded: false, pinned: false }
+let taskAnchor: { x: number; y: number } | undefined
+let taskHoverTimer: NodeJS.Timeout | undefined
+let taskHoverSince = 0
+let taskLastInside: boolean | undefined
+let taskMovingUntil = 0
 let tray: Tray | null = null
 let trayMenuKey: string | undefined
 let trayTooltip: string | undefined
@@ -92,6 +110,31 @@ let persistedState: PersistedState = {
   panel: {}
 }
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
+let taskMonitor: TaskMonitor
+let taskChanges: Promise<void> = Promise.resolve()
+let taskSnapshot: TasksSnapshot = { tasks: [], monitoring: false }
+const taskNotifications = new Set<Notification>()
+
+function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
+  const countChanged = taskSnapshot.tasks.length !== snapshot.tasks.length
+  taskSnapshot = snapshot
+  if (countChanged && taskWindowState.expanded) resizeTaskWindow(true)
+  sendToRenderers('codex-status:tasks-updated', snapshot)
+  refreshTrayMenu()
+  if (!completed.length || !persistedState.settings.taskNotifications || isQuitting) return
+  if (!Notification.isSupported()) return
+  const english = persistedState.settings.locale === 'en-US'
+  const notification = new Notification({
+    ...taskNotificationContent(completed, english),
+    silent: !persistedState.settings.taskNotificationSound,
+    icon: appIcon
+  })
+  taskNotifications.add(notification)
+  notification.on('click', () => openPanelWindow('tasks'))
+  notification.on('close', () => taskNotifications.delete(notification))
+  notification.on('failed', () => taskNotifications.delete(notification))
+  notification.show()
+}
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -244,6 +287,111 @@ function createPanelWindow(): BrowserWindow {
   return window
 }
 
+function openTasksWindow(): void {
+  panelWindow?.hide()
+  if (tasksWindow && !tasksWindow.isDestroyed()) {
+    resizeTaskWindow(taskWindowState.expanded)
+    tasksWindow.showInactive()
+    return
+  }
+  const area = screen.getPrimaryDisplay().workArea
+  taskAnchor ??= { x: Math.round(area.x + (area.width - 280) / 2), y: area.y + 8 }
+  taskWindowState = { expanded: false, pinned: false }
+  const window = new BrowserWindow({
+    ...taskWindowBounds(taskAnchor, area, false),
+    roundedCorners: true,
+    title: 'Codex Status · Tasks',
+    show: false,
+    frame: false,
+    // 与额度状态条一致，避免 Windows 原生边框/阴影扩出折叠内容区域。
+    thickFrame: false,
+    hasShadow: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    // Windows 保持透明底层，避免系统 Acrylic 在应用圆角之外绘制矩形背景。
+    visualEffectState: 'active',
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    icon: appIcon,
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false }
+  })
+  tasksWindow = window
+  window.setMenu(null)
+  const updateMaterial = (): void => resizeTaskWindow(taskWindowState.expanded)
+  nativeTheme.on('updated', updateMaterial)
+  window.on('ready-to-show', () => {
+    resizeTaskWindow(taskWindowState.expanded)
+    window.showInactive()
+  })
+  window.on('will-move', (_, bounds) => {
+    taskAnchor = { x: bounds.x, y: bounds.y }
+    taskMovingUntil = Date.now() + 600
+  })
+  window.on('hide', () => {
+    taskWindowState.pinned = false
+    resizeTaskWindow(false)
+  })
+  taskHoverTimer = setInterval(() => {
+    if (!window.isVisible() || Date.now() < taskMovingUntil) return
+    const point = screen.getCursorScreenPoint(),
+      bounds = window.getBounds()
+    // 命中区域与裁剪后的可见区域一致，避免窗口系统保留的边缘触发展开。
+    const visible = taskWindowBounds(
+      bounds,
+      screen.getDisplayMatching(bounds).workArea,
+      taskWindowState.expanded,
+      taskSnapshot.tasks.length
+    )
+    const inside =
+      point.x >= bounds.x &&
+      point.x < bounds.x + visible.width &&
+      point.y >= bounds.y &&
+      point.y < bounds.y + visible.height
+    if (inside !== taskLastInside) {
+      taskLastInside = inside
+      taskHoverSince = Date.now()
+    }
+    const expanded = taskHoverExpanded(inside, taskWindowState, Date.now() - taskHoverSince)
+    if (expanded !== taskWindowState.expanded) resizeTaskWindow(expanded)
+  }, 100)
+  window.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      window.hide()
+    }
+  })
+  window.on('closed', () => {
+    nativeTheme.removeListener('updated', updateMaterial)
+    clearInterval(taskHoverTimer)
+    tasksWindow = null
+  })
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  loadRenderer(window, 'tasks')
+}
+
+function resizeTaskWindow(expanded: boolean): void {
+  if (!tasksWindow || tasksWindow.isDestroyed() || !taskAnchor) return
+  const area = screen.getDisplayNearestPoint(taskAnchor).workArea
+  const bounds = taskWindowBounds(taskAnchor, area, expanded, taskSnapshot.tasks.length)
+  const nativeGlass =
+    expanded &&
+    !nativeTheme.prefersReducedTransparency &&
+    !nativeTheme.inForcedColorsMode &&
+    process.platform === 'darwin'
+  if (process.platform === 'darwin') tasksWindow.setVibrancy(nativeGlass ? 'under-window' : null)
+  tasksWindow.setBounds(bounds)
+  // 保留透明窗口的逐像素合成，圆角和收起高度由渲染层控制，不再用原生区域覆盖。
+  taskWindowState.expanded = expanded
+  taskWindowState.nativeGlass = nativeGlass
+  taskLastInside = undefined
+  tasksWindow.webContents.send('codex-status:task-window-updated', taskWindowState)
+}
+
 function loadRenderer(window: BrowserWindow, role: RendererWindowRole): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const url = new URL(process.env['ELECTRON_RENDERER_URL'])
@@ -269,6 +417,14 @@ if (hasSingleInstanceLock) {
       settings: syncLaunchAtLoginPreference(loadedState.settings)
     }
     currentSnapshot = createEmptySnapshot()
+    nativeTheme.themeSource = persistedState.settings.theme
+    taskMonitor = new TaskMonitor(
+      join(dirname(resolveCodexAuthPath()), 'sessions'),
+      join(app.getPath('userData'), 'codex-status-tasks.json'),
+      updateTasks
+    )
+    await taskMonitor.load()
+    await taskMonitor.setEnabled(persistedState.settings.taskMonitoring)
 
     if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {
       queuePersistState()
@@ -302,7 +458,17 @@ app.on('window-all-closed', () => {
   return
 })
 
-app.on('before-quit', () => {
+let tasksFlushed = false
+app.on('before-quit', (event) => {
+  if (taskMonitor && !tasksFlushed) {
+    event.preventDefault()
+    void taskChanges
+      .then(() => taskMonitor.stop())
+      .finally(() => {
+        tasksFlushed = true
+        app.quit()
+      })
+  }
   isQuitting = true
   clearInterval(trayTimer)
   clearRefreshTimer()
@@ -310,6 +476,25 @@ app.on('before-quit', () => {
 })
 
 function registerIpcHandlers(): void {
+  ipcMain.handle('codex-status:mute-task', async (_, id: string, muted: boolean) => {
+    if (typeof id === 'string' && typeof muted === 'boolean') await taskMonitor.setMuted(id, muted)
+  })
+  ipcMain.handle('codex-status:remove-task', async (_, id: string) => {
+    if (typeof id === 'string') await taskMonitor.remove(id)
+  })
+  ipcMain.handle('codex-status:restore-task', async (_, threadId: string) => {
+    if (typeof threadId === 'string') await taskMonitor.restore(threadId)
+  })
+  ipcMain.handle('codex-status:pin-task-window', (event, pinned: boolean) => {
+    if (event.sender.id !== tasksWindow?.webContents.id || typeof pinned !== 'boolean') return
+    taskWindowState.pinned = pinned
+    resizeTaskWindow(pinned || taskWindowState.expanded)
+  })
+  ipcMain.handle('codex-status:get-tasks', () => taskSnapshot)
+  ipcMain.handle('codex-status:copy-task-session', (_, id: string) => {
+    const task = typeof id === 'string' ? taskMonitor.get(id) : undefined
+    if (task) clipboard.writeText(task.threadId)
+  })
   ipcMain.handle(CHANNELS.bootstrap, async (event) => {
     return {
       settings: persistedState.settings,
@@ -317,7 +502,8 @@ function registerIpcHandlers(): void {
       panel: persistedState.panel,
       snapshot: currentSnapshot,
       role: resolveRendererRole(event.sender.id),
-      panelView: currentPanelView
+      panelView: currentPanelView,
+      taskWindow: taskWindowState
     }
   })
 
@@ -343,6 +529,11 @@ function registerIpcHandlers(): void {
     }
 
     queuePersistState()
+    nativeTheme.themeSource = nextSettings.theme
+    if (previousSettings.taskMonitoring !== nextSettings.taskMonitoring) {
+      taskChanges = taskChanges.then(() => taskMonitor.setEnabled(nextSettings.taskMonitoring))
+      await taskChanges
+    }
     syncRefreshTimer()
     if (previousSettings.capsuleScale !== nextSettings.capsuleScale) {
       syncCapsuleWindowBounds()
@@ -369,12 +560,14 @@ function registerIpcHandlers(): void {
     return createPreferencesPayload()
   })
 
-  ipcMain.handle(CHANNELS.closePanel, async () => {
-    panelWindow?.hide()
+  ipcMain.handle(CHANNELS.closePanel, async (event) => {
+    if (event.sender.id === tasksWindow?.webContents.id) tasksWindow.hide()
+    else panelWindow?.hide()
   })
 
-  ipcMain.handle(CHANNELS.openPanel, async () => {
-    openPanelWindow('details')
+  ipcMain.handle(CHANNELS.openPanel, async (_, view: PanelView) => {
+    if (view === 'settings' && tasksWindow?.isVisible()) tasksWindow.hide()
+    openPanelWindow(view === 'tasks' || view === 'settings' ? view : 'details')
   })
 
   ipcMain.handle(CHANNELS.moveCapsuleWindow, async (_, payload: CapsuleDragMovePayload) => {
@@ -431,6 +624,7 @@ function refreshTrayMenu(): void {
   }
   const menuKey = JSON.stringify([
     persistedState.settings.locale,
+    mainWindow?.isVisible() ?? false,
     canRefreshStatus(),
     isCheckingForUpdates
   ])
@@ -438,6 +632,10 @@ function refreshTrayMenu(): void {
 
   const labels = getTrayLabels()
   const menuTemplate: MenuItemConstructorOptions[] = [
+    {
+      label: persistedState.settings.locale === 'en-US' ? 'Tasks' : '任务列表',
+      click: () => openPanelWindow('tasks')
+    },
     {
       label: labels.refresh,
       enabled: canRefreshStatus(),
@@ -490,7 +688,7 @@ function getTrayLabels(): Record<
   if (persistedState.settings.locale === 'en-US') {
     return {
       refresh: 'Refresh',
-      toggle: 'Show/Hide Floating Window',
+      toggle: mainWindow?.isVisible() ? 'Hide Floating Window' : 'Show Floating Window',
       details: 'Details',
       settings: 'Settings',
       checkForUpdates: 'Check for Updates',
@@ -500,7 +698,7 @@ function getTrayLabels(): Record<
 
   return {
     refresh: '刷新',
-    toggle: '显示/隐藏悬浮窗',
+    toggle: mainWindow?.isVisible() ? '隐藏悬浮窗' : '显示悬浮窗',
     details: '详情',
     settings: '设置',
     checkForUpdates: '检查更新',
@@ -682,6 +880,7 @@ function prepareToQuit(): void {
   clearCodexAuthWatcher()
   tray?.destroy()
   panelWindow?.destroy()
+  tasksWindow?.destroy()
 }
 
 function quitApp(): void {
@@ -863,6 +1062,10 @@ function isLaunchAtLoginSupported(): boolean {
 }
 
 function openPanelWindow(view: PanelView): void {
+  if (view === 'tasks') {
+    openTasksWindow()
+    return
+  }
   currentPanelView = view
   if (!panelWindow || panelWindow.isDestroyed()) {
     panelWindow = createPanelWindow()
@@ -1116,9 +1319,11 @@ function resolvePanelBounds(x?: number, y?: number): Rectangle {
 function sendToRenderers(channel: string, payload: unknown): void {
   mainWindow?.webContents.send(channel, payload)
   panelWindow?.webContents.send(channel, payload)
+  tasksWindow?.webContents.send(channel, payload)
 }
 
 function resolveRendererRole(webContentsId: number): RendererWindowRole {
+  if (tasksWindow?.webContents.id === webContentsId) return 'tasks'
   return panelWindow?.webContents.id === webContentsId ? 'panel' : 'capsule'
 }
 

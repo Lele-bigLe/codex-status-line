@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import appIcon from '../../../build/icon.png'
+import { TaskList } from './components/TaskList'
+import type { TasksSnapshot, TaskWindowState } from '../../shared/tasks'
 import {
   CAPSULE_WINDOW_SIZE,
   DEFAULT_SETTINGS,
@@ -165,6 +167,8 @@ const COPY = {
 } as const
 
 function App(): React.JSX.Element {
+  const [taskWindow, setTaskWindow] = useState<TaskWindowState>({ expanded: false, pinned: false })
+  const [tasks, setTasks] = useState<TasksSnapshot>({ tasks: [], monitoring: false })
   const [snapshot, setSnapshot] = useState<UsageSnapshot>(() => createEmptySnapshot())
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const [windowPreferences, setWindowPreferences] = useState<WindowPreferences>({
@@ -189,6 +193,21 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
+    let taskWindowReceived = false
+    const disposeTaskWindow = window.codexStatus.onTaskWindowUpdated((state) => {
+      taskWindowReceived = true
+      setTaskWindow(state)
+    })
+    let tasksReceived = false
+    const disposeTasks = window.codexStatus.onTasksUpdated((payload) => {
+      tasksReceived = true
+      setTasks(payload)
+    })
+    void window.codexStatus.getTasks().then((payload) => {
+      if (active && !tasksReceived) setTasks(payload)
+    }).catch(() => {
+      if (active) setTasks({ tasks: [], monitoring: false, issue: '任务列表读取失败 / Could not load tasks' })
+    })
 
     void window.codexStatus
       .bootstrap()
@@ -198,6 +217,7 @@ function App(): React.JSX.Element {
         }
 
         setSnapshot(payload.snapshot)
+        if (!taskWindowReceived) setTaskWindow(payload.taskWindow ?? { expanded: false, pinned: false })
         setSettings(payload.settings)
         setWindowPreferences(payload.window)
         setWindowRole(payload.role)
@@ -244,6 +264,8 @@ function App(): React.JSX.Element {
         window.clearTimeout(manualRefreshTimerRef.current)
       }
       disposeSnapshot()
+      disposeTasks()
+      disposeTaskWindow()
       disposePreferences()
       disposeCommand()
     }
@@ -621,6 +643,37 @@ function App(): React.JSX.Element {
     )
   }
 
+  if (windowRole === 'tasks') {
+    const runningCount = tasks.tasks.filter(task => task.status === 'running').length
+    const current = tasks.tasks.find(task => task.status === 'running') ?? tasks.tasks[0]
+    const taskLabel = !tasks.monitoring ? (settings.locale === 'en-US' ? 'Monitoring paused' : '监视已暂停')
+      : runningCount ? (current?.title || current?.requestSummary || (settings.locale === 'en-US' ? 'Task running' : '任务执行中'))
+      : !current ? (settings.locale === 'en-US' ? 'Waiting for tasks' : '等待新任务')
+      : current.status === 'completed' ? (settings.locale === 'en-US' ? 'Turn ended' : '本轮已结束')
+      : current.status === 'interrupted' ? (settings.locale === 'en-US' ? 'Interrupted' : '任务已中断')
+      : (settings.locale === 'en-US' ? 'Status unknown' : '状态未知')
+    return (
+      <div className="app-shell app-shell--tasks" data-theme={settings.theme} data-native-glass={Boolean(taskWindow.nativeGlass)}>
+        {!taskWindow.expanded ? <div className="monitor-peek" data-status={current?.status ?? 'unknown'}>
+          <span className="monitor-peek-drag" title={settings.locale === 'en-US' ? 'Drag to move' : '拖动移动'} aria-hidden="true"><svg viewBox="0 0 10 14" fill="currentColor"><circle cx="3" cy="3" r="1"/><circle cx="7" cy="3" r="1"/><circle cx="3" cy="7" r="1"/><circle cx="7" cy="7" r="1"/><circle cx="3" cy="11" r="1"/><circle cx="7" cy="11" r="1"/></svg></span>
+          <button className="monitor-peek-summary" type="button" title={runningCount && tasks.monitoring ? `${settings.locale === 'en-US' ? `${runningCount} running` : `${runningCount} 个任务进行中`} · ${taskLabel}` : current?.title || taskLabel} onClick={() => {
+            void window.codexStatus.setTaskWindowPinned(true).catch(recordSnapshotIssue)
+          }}><i aria-hidden="true"/><strong>{runningCount && tasks.monitoring ? (settings.locale === 'en-US' ? 'Running' : '进行中') : 'Codex'}</strong><span>{taskLabel}</span></button>
+          <button className="monitor-peek-close" type="button" onClick={closePanel} aria-label={copy.close} title={copy.close}><CloseIcon /></button>
+        </div> : null}
+        <section className="panel panel--tasks monitor-popup" hidden={!taskWindow.expanded}>
+          <TaskList snapshot={tasks} locale={settings.locale} notifications={settings.taskNotifications}
+            active={taskWindow.expanded} pinned={taskWindow.pinned} onPin={() => {
+              void window.codexStatus.setTaskWindowPinned(!taskWindow.pinned).catch(recordSnapshotIssue)
+            }}
+            onClose={closePanel} onSettings={() => {
+              void window.codexStatus.openPanel('settings').catch(recordSnapshotIssue)
+            }} />
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell app-shell--panel" data-theme={settings.theme}>
       <section className={`panel panel--${panelView}`}>
@@ -641,6 +694,11 @@ function App(): React.JSX.Element {
         <nav className="panel__nav" aria-label={copy.details}>
           <button type="button" aria-pressed={panelView === 'details'} onClick={openDetails}>
             {copy.overview}
+          </button>
+          <button className="panel__tasks-link" type="button" onClick={() => {
+            void window.codexStatus.openPanel('tasks').catch(recordSnapshotIssue)
+          }}>
+            {settings.locale === 'en-US' ? 'Tasks ↗' : '任务 ↗'}
           </button>
           <button type="button" aria-pressed={panelView === 'settings'} onClick={openSettings}>
             {copy.settings}
@@ -782,6 +840,19 @@ function App(): React.JSX.Element {
               ) : null}
 
               <div className="settings-list">
+                <div className="settings-section">
+                  <p className="settings-section__title">{settings.locale === 'en-US' ? 'Tasks & notifications' : '任务与通知'}</p>
+                  {([
+                    ['taskMonitoring', settings.locale === 'en-US' ? 'Monitor local tasks' : '本机任务监视'],
+                    ['taskNotifications', settings.locale === 'en-US' ? 'Desktop notifications' : '桌面完成通知'],
+                    ['taskNotificationSound', settings.locale === 'en-US' ? 'Notification sound' : '通知声音']
+                  ] as const).map(([key, label]) => <div className="setting-row" key={key}>
+                    <span>{label}</span>
+                    <ToggleSwitch checked={settings[key]} label={label} offLabel={copy.disabled} onLabel={copy.enabled}
+                      onChange={(checked) => { void handleSettingsPatch({ [key]: checked }) }} />
+                  </div>)}
+                  <p className="task-help">{settings.locale === 'en-US' ? 'Notifications require OS permission. Titles and short request summaries are stored locally and shown in notifications. Turning notifications off keeps the task list active. Historical results are not replayed.' : '通知需系统允许，会显示标题和本轮需求摘要；仅在本机保存。关闭通知仍保留任务列表，重启监视不补发历史提醒。'}</p>
+                </div>
                 <div className="settings-section">
                   <p className="settings-section__title">{copy.groupRefresh}</p>
                   <SettingField label={copy.refreshMode}>

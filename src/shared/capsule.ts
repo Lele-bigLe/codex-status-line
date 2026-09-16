@@ -2,8 +2,8 @@ export type PercentageMode = 'remaining' | 'used'
 export type RefreshMode = 'auto' | 'manual'
 export type LocaleCode = 'zh-CN' | 'en-US'
 export type RateLimitSource = 'official' | 'cache' | 'none'
-export type PanelView = 'details' | 'settings'
-export type RendererWindowRole = 'capsule' | 'panel'
+export type PanelView = 'details' | 'settings' | 'tasks'
+export type RendererWindowRole = 'capsule' | 'panel' | 'tasks'
 export type CapsuleViewMode = 'capsule' | 'orb'
 export type DockEdge = 'left' | 'right'
 export type RendererCommandType = 'show-panel-view'
@@ -45,6 +45,9 @@ export interface UsageSnapshot {
 }
 
 export interface AppSettings {
+  taskMonitoring: boolean
+  taskNotifications: boolean
+  taskNotificationSound: boolean
   theme: 'light' | 'dark'
   capsuleScale: number
   displayMode: 'floating' | 'tray'
@@ -74,6 +77,7 @@ export interface PersistedState {
 }
 
 export interface BootstrapPayload {
+  taskWindow: import('./tasks').TaskWindowState
   settings: AppSettings
   window: WindowPreferences
   panel: PanelPreferences
@@ -101,11 +105,19 @@ export interface RendererCommandPayload {
 }
 
 export interface CodexStatusApi {
+  setTaskMuted: (id: string, muted: boolean) => Promise<void>
+  removeTask: (id: string) => Promise<void>
+  restoreTask: (threadId: string) => Promise<void>
+  setTaskWindowPinned: (pinned: boolean) => Promise<void>
+  onTaskWindowUpdated: (listener: (state: import('./tasks').TaskWindowState) => void) => () => void
+  getTasks: () => Promise<import('./tasks').TasksSnapshot>
+  copyTaskSession: (id: string) => Promise<void>
+  onTasksUpdated: (listener: (snapshot: import('./tasks').TasksSnapshot) => void) => () => void
   bootstrap: () => Promise<BootstrapPayload>
   refreshStatus: () => Promise<UsageSnapshot>
   updateSettings: (patch: Partial<AppSettings>) => Promise<PreferencesPayload>
   closePanel: () => Promise<void>
-  openPanel: () => Promise<void>
+  openPanel: (view?: PanelView) => Promise<void>
   moveCapsuleWindow: (payload: CapsuleDragMovePayload) => Promise<WindowPreferences>
   finishCapsuleWindowDrag: () => Promise<WindowPreferences>
   onSnapshotUpdated: (listener: (snapshot: UsageSnapshot) => void) => () => void
@@ -150,6 +162,9 @@ export const PANEL_WINDOW_SIZE = {
 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  taskMonitoring: true,
+  taskNotifications: true,
+  taskNotificationSound: false,
   theme: 'light',
   capsuleScale: 100,
   displayMode: 'tray',
@@ -180,6 +195,9 @@ export function createEmptySnapshot(): UsageSnapshot {
 
 export function normalizeSettings(input: Partial<AppSettings> | undefined): AppSettings {
   return {
+    taskMonitoring: typeof input?.taskMonitoring === 'boolean' ? input.taskMonitoring : true,
+    taskNotifications: typeof input?.taskNotifications === 'boolean' ? input.taskNotifications : true,
+    taskNotificationSound: input?.taskNotificationSound === true,
     theme: input?.theme === 'dark' ? 'dark' : 'light',
     capsuleScale: normalizeCapsuleScale(input?.capsuleScale),
     displayMode:
