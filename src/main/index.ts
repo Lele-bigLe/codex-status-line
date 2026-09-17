@@ -127,10 +127,11 @@ function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
   const notification = new Notification({
     ...taskNotificationContent(completed, english),
     silent: !persistedState.settings.taskNotificationSound,
+    timeoutType: 'default',
     icon: appIcon
   })
   taskNotifications.add(notification)
-  notification.on('click', () => openPanelWindow('tasks'))
+  notification.on('click', () => notification.close())
   notification.on('close', () => taskNotifications.delete(notification))
   notification.on('failed', () => taskNotifications.delete(notification))
   notification.show()
