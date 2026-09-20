@@ -11,6 +11,7 @@ import {
   nativeImage,
   nativeTheme,
   screen,
+  type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
   type Rectangle
 } from 'electron'
@@ -50,6 +51,7 @@ import {
 import { loadPersistedState, savePersistedState } from './services/state'
 import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
 import { TaskMonitor } from './services/tasks'
+import { FeishuNotifier } from './services/feishu'
 import {
   taskWindowBounds,
   taskNotificationContent,
@@ -111,6 +113,7 @@ let persistedState: PersistedState = {
 }
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
 let taskMonitor: TaskMonitor
+let feishuNotifier: FeishuNotifier
 let taskChanges: Promise<void> = Promise.resolve()
 let taskSnapshot: TasksSnapshot = { tasks: [], monitoring: false }
 const taskNotifications = new Set<Notification>()
@@ -121,8 +124,17 @@ function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
   if (countChanged && taskWindowState.expanded) resizeTaskWindow(true)
   sendToRenderers('codex-status:tasks-updated', snapshot)
   refreshTrayMenu()
-  if (!completed.length || !persistedState.settings.taskNotifications || isQuitting) return
-  if (!Notification.isSupported()) return
+  if (!completed.length || isQuitting) return
+  if (feishuNotifier.getStatus().enabled) {
+    void feishuNotifier.send(() => {
+      if (isQuitting || !taskSnapshot.monitoring) return
+      const eligible = completed.filter((task) => taskSnapshot.tasks.some(
+        (current) => current.threadId === task.threadId && !current.muted
+      ))
+      if (eligible.length) return taskNotificationContent(eligible, persistedState.settings.locale === 'en-US')
+    })
+  }
+  if (!persistedState.settings.taskNotifications || !Notification.isSupported()) return
   const english = persistedState.settings.locale === 'en-US'
   const notification = new Notification({
     ...taskNotificationContent(completed, english),
@@ -419,6 +431,11 @@ if (hasSingleInstanceLock) {
     }
     currentSnapshot = createEmptySnapshot()
     nativeTheme.themeSource = persistedState.settings.theme
+    feishuNotifier = new FeishuNotifier(
+      join(app.getPath('userData'), 'codex-status-feishu.bin'),
+      (status) => sendToRenderers('codex-status:feishu-status-updated', status)
+    )
+    await feishuNotifier.load()
     taskMonitor = new TaskMonitor(
       join(dirname(resolveCodexAuthPath()), 'sessions'),
       join(app.getPath('userData'), 'codex-status-tasks.json'),
@@ -471,12 +488,36 @@ app.on('before-quit', (event) => {
       })
   }
   isQuitting = true
+  feishuNotifier?.stop()
   clearInterval(trayTimer)
   clearRefreshTimer()
   clearCodexAuthWatcher()
 })
 
 function registerIpcHandlers(): void {
+  // 凭据仅供设置窗口读写，不随通用偏好广播给悬浮窗和任务窗口。
+  const requirePanel = (event: IpcMainInvokeEvent): void => {
+    if (event.sender.id !== panelWindow?.webContents.id || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error('请在设置窗口配置飞书 / Open settings to configure Feishu')
+    }
+  }
+  ipcMain.handle('codex-status:get-feishu-settings', (event) => {
+    requirePanel(event)
+    return feishuNotifier.getSettings()
+  })
+  ipcMain.handle('codex-status:save-feishu-settings', (event, settings: unknown) => {
+    requirePanel(event)
+    return feishuNotifier.save(settings)
+  })
+  ipcMain.handle('codex-status:test-feishu-notification', (event) => {
+    requirePanel(event)
+    const english = persistedState.settings.locale === 'en-US'
+    return feishuNotifier.send(() => ({
+      title: english ? 'Test notification' : '飞书测试通知',
+      body: english ? 'Feishu notifications are connected. Check your phone for this message.'
+        : '飞书通知已连接，请检查手机是否收到这条消息。'
+    }), true)
+  })
   ipcMain.handle('codex-status:mute-task', async (_, id: string, muted: boolean) => {
     if (typeof id === 'string' && typeof muted === 'boolean') await taskMonitor.setMuted(id, muted)
   })
@@ -498,6 +539,7 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle(CHANNELS.bootstrap, async (event) => {
     return {
+      feishuStatus: feishuNotifier.getStatus(),
       settings: persistedState.settings,
       window: persistedState.window,
       panel: persistedState.panel,

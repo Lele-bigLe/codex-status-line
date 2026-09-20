@@ -77,6 +77,7 @@ export interface PersistedState {
 }
 
 export interface BootstrapPayload {
+  feishuStatus: import('./feishu').FeishuStatus
   taskWindow: import('./tasks').TaskWindowState
   settings: AppSettings
   window: WindowPreferences
@@ -105,6 +106,10 @@ export interface RendererCommandPayload {
 }
 
 export interface CodexStatusApi {
+  getFeishuSettings: () => Promise<import('./feishu').FeishuSettings>
+  saveFeishuSettings: (settings: import('./feishu').FeishuSettings) => Promise<import('./feishu').FeishuSettings>
+  testFeishuNotification: () => Promise<void>
+  onFeishuStatusUpdated: (listener: (status: import('./feishu').FeishuStatus) => void) => () => void
   setTaskMuted: (id: string, muted: boolean) => Promise<void>
   removeTask: (id: string) => Promise<void>
   restoreTask: (threadId: string) => Promise<void>

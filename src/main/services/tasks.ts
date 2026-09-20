@@ -127,6 +127,8 @@ export class TaskMonitor {
   private dirty = new Set<string>()
   private watcher?: FSWatcher
   private timer?: NodeJS.Timeout
+  private changeTimer?: NodeJS.Timeout
+  private readAgain = false
   private active = false
   private busy?: Promise<void>
   private lastScan = 0
@@ -232,6 +234,9 @@ export class TaskMonitor {
   async setEnabled(enabled: boolean): Promise<void> {
     this.active = false
     clearInterval(this.timer)
+    clearTimeout(this.changeTimer)
+    this.changeTimer = undefined
+    this.readAgain = false
     this.watcher?.close()
     this.watcher = undefined
     await this.busy
@@ -285,7 +290,10 @@ export class TaskMonitor {
             if (!filename || !filename.endsWith('.jsonl')) return
             const file = path.resolve(this.root, filename)
             const relative = path.relative(this.root, file)
-            if (!relative.startsWith('..') && !path.isAbsolute(relative)) this.dirty.add(file)
+            if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+              this.dirty.add(file)
+              this.schedulePoll()
+            }
           })
           this.watcher.on('error', () => {
             this.watcher?.close()
@@ -305,20 +313,41 @@ export class TaskMonitor {
     }
   }
 
+  private schedulePoll(): void {
+    if (!this.active) return
+    this.readAgain = true
+    if (this.busy || this.changeTimer) return
+    // 合并一小段连续写入；不重置计时器，避免持续输出把结束通知一直推迟。
+    this.changeTimer = setTimeout(() => {
+      this.changeTimer = undefined
+      void this.poll()
+    }, 50)
+  }
+
   poll(rescan = false): Promise<void> {
     if (!this.active) return Promise.resolve()
-    if (this.busy) return this.busy
+    if (this.busy) return rescan ? this.busy.then(() => this.poll(true)) : this.busy
+    clearTimeout(this.changeTimer)
+    this.changeTimer = undefined
+    this.readAgain = false
     this.busy = this.readChanges(rescan).finally(() => {
       this.busy = undefined
+      if (this.readAgain) this.schedulePoll()
     })
     return this.busy
   }
 
   private async readChanges(rescan: boolean): Promise<void> {
+    // 已知变更先读取并发布，结束通知不必排在整个历史目录的扫描后面。
+    await this.readDirtyFiles()
     if (rescan || Date.now() - this.lastScan >= (this.watcher ? 30000 : 5000)) {
       await this.scan()
       await this.readTitles()
+      await this.readDirtyFiles()
     }
+  }
+
+  private async readDirtyFiles(): Promise<void> {
     const files = [...this.dirty]
     this.dirty.clear()
     let readFailed = false
@@ -335,7 +364,7 @@ export class TaskMonitor {
         }
       }
     }
-    if (files.length && !readFailed && this.issue?.startsWith('部分会话')) {
+    if (files.length && !readFailed && !this.dirty.size && this.issue?.startsWith('部分会话')) {
       this.issue = undefined
       this.changed = true
     }
@@ -454,7 +483,10 @@ export class TaskMonitor {
           cursor.skipping = true
         }
       }
-      if (cursor.offset < stat.size) this.dirty.add(file)
+      if (cursor.offset < stat.size) {
+        this.dirty.add(file)
+        this.schedulePoll()
+      }
     } finally {
       await handle.close()
     }
@@ -575,7 +607,11 @@ export class TaskMonitor {
   async stop(): Promise<void> {
     this.active = false
     clearInterval(this.timer)
+    clearTimeout(this.changeTimer)
+    this.changeTimer = undefined
+    this.readAgain = false
     this.watcher?.close()
+    this.watcher = undefined
     await this.busy
     await this.writes
   }

@@ -3,6 +3,12 @@ import appIcon from '../../../build/icon.png'
 import { TaskList } from './components/TaskList'
 import type { TasksSnapshot, TaskWindowState } from '../../shared/tasks'
 import {
+  DEFAULT_FEISHU_SETTINGS,
+  DEFAULT_FEISHU_STATUS,
+  type FeishuSettings,
+  type FeishuStatus
+} from '../../shared/feishu'
+import {
   CAPSULE_WINDOW_SIZE,
   DEFAULT_SETTINGS,
   DEFAULT_WINDOW_PREFERENCES,
@@ -58,7 +64,7 @@ const COPY = {
     theme: '界面主题',
     lightTheme: '浅色',
     darkTheme: '深色',
-    settingsIntro: '调整显示与刷新方式，设置自动保存。',
+    settingsIntro: '常规设置自动保存；飞书配置需点击保存。',
     capsuleScale: '悬浮窗大小',
     capsuleScaleHint: '文字和状态条等比例缩放，支持 100–300%。',
     floatingMode: '悬浮状态条',
@@ -120,7 +126,7 @@ const COPY = {
     theme: 'Theme',
     lightTheme: 'Light',
     darkTheme: 'Dark',
-    settingsIntro: 'Choose how the app looks and refreshes. Changes save automatically.',
+    settingsIntro: 'General settings save automatically. Save Feishu settings separately.',
     capsuleScale: 'Floating window size',
     capsuleScaleHint: 'Scale text and bar together, from 100% to 300%.',
     floatingMode: 'Floating bar',
@@ -184,6 +190,12 @@ function App(): React.JSX.Element {
   const [ready, setReady] = useState(false)
   const [now, setNow] = useState(Date.now)
   const [settingsIssue, setSettingsIssue] = useState(false)
+  const [feishuStatus, setFeishuStatus] = useState<FeishuStatus>({ ...DEFAULT_FEISHU_STATUS })
+  const [feishuSettings, setFeishuSettings] = useState<FeishuSettings>({ ...DEFAULT_FEISHU_SETTINGS })
+  const [savedFeishuSettings, setSavedFeishuSettings] = useState<FeishuSettings>({ ...DEFAULT_FEISHU_SETTINGS })
+  const [feishuLoaded, setFeishuLoaded] = useState(false)
+  const [feishuBusy, setFeishuBusy] = useState<'save' | 'test' | undefined>()
+  const [feishuIssue, setFeishuIssue] = useState('')
   const capsulePointerRef = useRef<CapsulePointerState | null>(null)
   const dragFrameRef = useRef<number | undefined>(undefined)
   const pendingDragRef = useRef<CapsuleDragMovePayload | undefined>(undefined)
@@ -193,6 +205,11 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
+    let feishuStatusReceived = false
+    const disposeFeishuStatus = window.codexStatus.onFeishuStatusUpdated((status) => {
+      feishuStatusReceived = true
+      setFeishuStatus(status)
+    })
     let taskWindowReceived = false
     const disposeTaskWindow = window.codexStatus.onTaskWindowUpdated((state) => {
       taskWindowReceived = true
@@ -217,6 +234,7 @@ function App(): React.JSX.Element {
         }
 
         setSnapshot(payload.snapshot)
+        if (!feishuStatusReceived) setFeishuStatus(payload.feishuStatus)
         if (!taskWindowReceived) setTaskWindow(payload.taskWindow ?? { expanded: false, pinned: false })
         setSettings(payload.settings)
         setWindowPreferences(payload.window)
@@ -264,12 +282,29 @@ function App(): React.JSX.Element {
         window.clearTimeout(manualRefreshTimerRef.current)
       }
       disposeSnapshot()
+      disposeFeishuStatus()
       disposeTasks()
       disposeTaskWindow()
       disposePreferences()
       disposeCommand()
     }
   }, [])
+
+  useEffect(() => {
+    if (!ready || windowRole !== 'panel' || panelView !== 'settings') return
+    let active = true
+    setFeishuLoaded(false)
+    setFeishuIssue('')
+    void window.codexStatus.getFeishuSettings().then((value) => {
+      if (!active) return
+      setFeishuSettings(value)
+      setSavedFeishuSettings(value)
+      setFeishuLoaded(true)
+    }).catch(() => {
+      if (active) setFeishuIssue('飞书配置读取失败，请重新打开设置 / Could not load Feishu settings')
+    })
+    return () => { active = false }
+  }, [ready, windowRole, panelView])
 
   useEffect(() => {
     const updateClock = (): void => {
@@ -284,6 +319,9 @@ function App(): React.JSX.Element {
   }, [])
 
   const copy = COPY[settings.locale]
+  const feishuDirty = feishuSettings.enabled !== savedFeishuSettings.enabled ||
+    feishuSettings.webhook !== savedFeishuSettings.webhook ||
+    feishuSettings.secret !== savedFeishuSettings.secret
   const canRefresh = snapshot.canRefresh !== false
   const fixedRefreshValues = REFRESH_INTERVAL_OPTIONS.map((option) => String(option))
   const isCustomRefreshInterval = !fixedRefreshValues.includes(
@@ -544,6 +582,32 @@ function App(): React.JSX.Element {
     }
   }
 
+  async function saveFeishuSettings(): Promise<void> {
+    setFeishuBusy('save')
+    setFeishuIssue('')
+    try {
+      const value = await window.codexStatus.saveFeishuSettings(feishuSettings)
+      setFeishuSettings(value)
+      setSavedFeishuSettings(value)
+    } catch (error) {
+      setFeishuIssue(error instanceof Error ? error.message : '飞书配置保存失败 / Could not save Feishu settings')
+    } finally {
+      setFeishuBusy(undefined)
+    }
+  }
+
+  async function testFeishuNotification(): Promise<void> {
+    setFeishuBusy('test')
+    setFeishuIssue('')
+    try {
+      await window.codexStatus.testFeishuNotification()
+    } catch {
+      setFeishuIssue('无法发送测试通知，请重试 / Could not send the test notification')
+    } finally {
+      setFeishuBusy(undefined)
+    }
+  }
+
   function commitCustomRefreshInterval(): void {
     if (!canEditCustomRefresh) {
       setCustomRefreshInput(String(settings.refreshIntervalSeconds))
@@ -662,7 +726,7 @@ function App(): React.JSX.Element {
           <button className="monitor-peek-close" type="button" onClick={closePanel} aria-label={copy.close} title={copy.close}><CloseIcon /></button>
         </div> : null}
         <section className="panel panel--tasks monitor-popup" hidden={!taskWindow.expanded}>
-          <TaskList snapshot={tasks} locale={settings.locale} notifications={settings.taskNotifications}
+          <TaskList snapshot={tasks} locale={settings.locale} notifications={settings.taskNotifications || feishuStatus.enabled}
             active={taskWindow.expanded} pinned={taskWindow.pinned} onPin={() => {
               void window.codexStatus.setTaskWindowPinned(!taskWindow.pinned).catch(recordSnapshotIssue)
             }}
@@ -845,13 +909,71 @@ function App(): React.JSX.Element {
                   {([
                     ['taskMonitoring', settings.locale === 'en-US' ? 'Monitor local tasks' : '本机任务监视'],
                     ['taskNotifications', settings.locale === 'en-US' ? 'Desktop notifications' : '桌面完成通知'],
-                    ['taskNotificationSound', settings.locale === 'en-US' ? 'Notification sound' : '通知声音']
+                    ['taskNotificationSound', settings.locale === 'en-US' ? 'Desktop notification sound' : '桌面通知声音']
                   ] as const).map(([key, label]) => <div className="setting-row" key={key}>
                     <span>{label}</span>
                     <ToggleSwitch checked={settings[key]} label={label} offLabel={copy.disabled} onLabel={copy.enabled}
                       onChange={(checked) => { void handleSettingsPatch({ [key]: checked }) }} />
                   </div>)}
-                  <p className="task-help">{settings.locale === 'en-US' ? 'Notifications require OS permission. Titles and short request summaries are stored locally and shown in notifications. Turning notifications off keeps the task list active. Historical results are not replayed.' : '通知需系统允许，会显示标题和本轮需求摘要；仅在本机保存。关闭通知仍保留任务列表，重启监视不补发历史提醒。'}</p>
+                  <p className="task-help">{settings.locale === 'en-US' ? 'Desktop notifications require OS permission and show the title and request summary. Desktop and Feishu notifications have separate switches. Muted or removed sessions do not notify; historical results are not replayed.' : '桌面通知需系统允许，会显示标题和本轮需求摘要。桌面与飞书通知分别开关；静音或移除的会话不提醒，重启监视不补发历史通知。'}</p>
+                </div>
+                <div className="settings-section">
+                  <p className="settings-section__title">{settings.locale === 'en-US' ? 'Feishu mobile notifications' : '飞书手机通知'}</p>
+                  <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
+                    aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Feishu settings' : '飞书配置'}>
+                    <div className="setting-row">
+                      <span>{settings.locale === 'en-US' ? 'Notify when turns end' : '轮次结束时推送'}</span>
+                      <ToggleSwitch checked={feishuSettings.enabled}
+                        label={settings.locale === 'en-US' ? 'Feishu notifications' : '飞书通知'}
+                        offLabel={copy.disabled} onLabel={copy.enabled}
+                        onChange={(enabled) => setFeishuSettings({ ...feishuSettings, enabled })} />
+                    </div>
+                    <label className="feishu-field">
+                      <span>{settings.locale === 'en-US' ? 'Webhook URL' : 'Webhook 地址'}</span>
+                      <span className="inline-input inline-input--secret">
+                        <input type="password" autoComplete="off" spellCheck={false} maxLength={512}
+                          placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"
+                          value={feishuSettings.webhook}
+                          onChange={(event) => setFeishuSettings({ ...feishuSettings, webhook: event.target.value })} />
+                      </span>
+                    </label>
+                    <label className="feishu-field">
+                      <span>{settings.locale === 'en-US' ? 'Signing secret (optional)' : '签名密钥（可选）'}</span>
+                      <span className="inline-input inline-input--secret">
+                        <input type="password" autoComplete="new-password" spellCheck={false} maxLength={256}
+                          placeholder={settings.locale === 'en-US' ? 'Required if signature verification is enabled' : '机器人开启签名校验时必填'}
+                          value={feishuSettings.secret}
+                          onChange={(event) => setFeishuSettings({ ...feishuSettings, secret: event.target.value })} />
+                      </span>
+                    </label>
+                    <div className="feishu-actions">
+                      <button className="ghost-button ghost-button--accent" type="button" disabled={!feishuDirty}
+                        onClick={() => { void saveFeishuSettings() }}>
+                        {feishuBusy === 'save' ? (settings.locale === 'en-US' ? 'Saving…' : '保存中…')
+                          : feishuDirty ? (settings.locale === 'en-US' ? 'Save settings' : '保存配置')
+                          : (settings.locale === 'en-US' ? 'Saved' : '已保存')}
+                      </button>
+                      <button className="ghost-button" type="button" disabled={feishuDirty || !savedFeishuSettings.webhook}
+                        onClick={() => { void testFeishuNotification() }}>
+                        {feishuBusy === 'test' ? (settings.locale === 'en-US' ? 'Sending…' : '发送中…')
+                          : (settings.locale === 'en-US' ? 'Send test notification' : '发送测试通知')}
+                      </button>
+                    </div>
+                  </fieldset>
+                  <p className="task-help">{settings.locale === 'en-US'
+                    ? 'Credentials are encrypted on this computer. Enabling sends titles and request summaries to your Feishu group. Keep Codex Status running and task monitoring on; the desktop Feishu app need not be signed in.'
+                    : '地址与密钥加密保存在本机；开启后会将标题和需求摘要发送到指定飞书群。需保持本应用运行并开启任务监视，电脑飞书无需登录。'}</p>
+                  {feishuStatus.enabled && !settings.taskMonitoring ? <p className="settings-error" role="status">
+                    {settings.locale === 'en-US' ? 'Task monitoring is paused; automatic notifications are paused too.' : '任务监视已关闭，自动推送也已暂停。'}
+                  </p> : null}
+                  <p className={`task-help${feishuStatus.phase === 'failed' ? ' settings-error' : ''}`} role="status">
+                    {feishuStatus.phase === 'sending' ? (settings.locale === 'en-US' ? 'Sending to Feishu…' : '正在发送到飞书…')
+                      : feishuStatus.phase === 'sent' ? (settings.locale === 'en-US' ? 'Accepted by Feishu; check your phone.' : '飞书已接收，请检查手机通知。')
+                      : feishuStatus.phase === 'failed' ? feishuStatus.issue
+                      : (settings.locale === 'en-US' ? 'No notifications sent with this configuration yet.' : '当前配置尚未发送通知。')}
+                    {feishuStatus.updatedAt ? ` · ${new Date(feishuStatus.updatedAt).toLocaleTimeString(settings.locale)}` : ''}
+                  </p>
+                  {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
                 </div>
                 <div className="settings-section">
                   <p className="settings-section__title">{copy.groupRefresh}</p>

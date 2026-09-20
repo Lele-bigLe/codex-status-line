@@ -984,6 +984,36 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.feishu-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.feishu-field {
+  display: grid;
+  gap: 6px;
+  color: var(--panel-text-2);
+  font-size: 13px;
+}
+
+.inline-input--secret {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.inline-input--secret input {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.feishu-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .inline-input:focus-within {
   border-color: var(--panel-accent);
 }

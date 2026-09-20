@@ -24,6 +24,10 @@ const CHANNELS = {
 } as const
 
 const api: CodexStatusApi = {
+  getFeishuSettings: () => ipcRenderer.invoke('codex-status:get-feishu-settings'),
+  saveFeishuSettings: (settings) => ipcRenderer.invoke('codex-status:save-feishu-settings', settings),
+  testFeishuNotification: () => ipcRenderer.invoke('codex-status:test-feishu-notification'),
+  onFeishuStatusUpdated: (listener) => subscribe('codex-status:feishu-status-updated', listener),
   setTaskMuted: (id, muted) => ipcRenderer.invoke('codex-status:mute-task', id, muted),
   removeTask: (id) => ipcRenderer.invoke('codex-status:remove-task', id),
   restoreTask: (threadId) => ipcRenderer.invoke('codex-status:restore-task', threadId),
