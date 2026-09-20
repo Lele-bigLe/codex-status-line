@@ -127,11 +127,13 @@ function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
   if (!completed.length || isQuitting) return
   if (feishuNotifier.getStatus().enabled) {
     void feishuNotifier.send(() => {
-      if (isQuitting || !taskSnapshot.monitoring) return
+      if (isQuitting || !taskSnapshot.monitoring) return undefined
       const eligible = completed.filter((task) => taskSnapshot.tasks.some(
         (current) => current.threadId === task.threadId && !current.muted
       ))
-      if (eligible.length) return taskNotificationContent(eligible, persistedState.settings.locale === 'en-US')
+      return eligible.length
+        ? taskNotificationContent(eligible, persistedState.settings.locale === 'en-US')
+        : undefined
     })
   }
   if (!persistedState.settings.taskNotifications || !Notification.isSupported()) return
