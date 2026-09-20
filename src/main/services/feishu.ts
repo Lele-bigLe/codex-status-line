@@ -21,6 +21,7 @@ function validateSettings(value: unknown): FeishuSettings {
   if (
     !input ||
     typeof input.enabled !== 'boolean' ||
+    (input.mentionAll !== undefined && typeof input.mentionAll !== 'boolean') ||
     typeof input.webhook !== 'string' ||
     typeof input.secret !== 'string' ||
     input.webhook.length > 512 ||
@@ -29,6 +30,7 @@ function validateSettings(value: unknown): FeishuSettings {
 
   const settings = {
     enabled: input.enabled,
+    mentionAll: input.mentionAll ?? DEFAULT_FEISHU_SETTINGS.mentionAll,
     webhook: input.webhook.trim(),
     secret: input.secret.trim()
   }
@@ -167,9 +169,10 @@ export class FeishuNotifier {
   private async post(content: { title: string; body: string }): Promise<void> {
     if (!this.settings.webhook) throw new FeishuRequestError('请先保存 Webhook 地址 / Save a webhook URL first')
     const timestamp = Math.floor(Date.now() / 1000).toString()
+    const text = `Codex Status\n${content.title}\n${content.body}`.trim()
     const body = {
       msg_type: 'text',
-      content: { text: `Codex Status\n${content.title}\n${content.body}`.trim() },
+      content: { text: this.settings.mentionAll ? `${text}\n<at user_id="all">所有人</at>` : text },
       ...(this.settings.secret ? {
         timestamp,
         sign: createHmac('sha256', `${timestamp}\n${this.settings.secret}`).update('').digest('base64')

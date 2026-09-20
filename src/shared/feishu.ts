@@ -1,5 +1,6 @@
 export interface FeishuSettings {
   enabled: boolean
+  mentionAll: boolean
   webhook: string
   secret: string
 }
@@ -13,6 +14,7 @@ export interface FeishuStatus {
 
 export const DEFAULT_FEISHU_SETTINGS: FeishuSettings = {
   enabled: false,
+  mentionAll: false,
   webhook: '',
   secret: ''
 }

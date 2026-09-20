@@ -320,6 +320,7 @@ function App(): React.JSX.Element {
 
   const copy = COPY[settings.locale]
   const feishuDirty = feishuSettings.enabled !== savedFeishuSettings.enabled ||
+    feishuSettings.mentionAll !== savedFeishuSettings.mentionAll ||
     feishuSettings.webhook !== savedFeishuSettings.webhook ||
     feishuSettings.secret !== savedFeishuSettings.secret
   const canRefresh = snapshot.canRefresh !== false
@@ -928,6 +929,16 @@ function App(): React.JSX.Element {
                         offLabel={copy.disabled} onLabel={copy.enabled}
                         onChange={(enabled) => setFeishuSettings({ ...feishuSettings, enabled })} />
                     </div>
+                    <div className="setting-row">
+                      <span>{settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}</span>
+                      <ToggleSwitch checked={feishuSettings.mentionAll}
+                        label={settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}
+                        offLabel={copy.disabled} onLabel={copy.enabled}
+                        onChange={(mentionAll) => setFeishuSettings({ ...feishuSettings, mentionAll })} />
+                    </div>
+                    <p className="task-help">{settings.locale === 'en-US'
+                      ? 'For a personal notification group, enable this to mention yourself without a user ID. The group must allow the bot to mention everyone. Test notifications also mention everyone.'
+                      : '个人通知群可开启，无需填写用户 ID；群内需允许机器人 @所有人，测试通知也会 @所有人。'}</p>
                     <label className="feishu-field">
                       <span>{settings.locale === 'en-US' ? 'Webhook URL' : 'Webhook 地址'}</span>
                       <span className="inline-input inline-input--secret">
