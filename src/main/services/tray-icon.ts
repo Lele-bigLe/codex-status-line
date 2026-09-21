@@ -41,7 +41,7 @@ export function getTrayIconState(
   const remaining = settings.percentageMode === 'used' ? 100 - percent : percent
   return {
     text,
-    color: stale ? '#475569' : remaining >= 65 ? '#166534' : remaining >= 35 ? '#92400e' : '#b91c1c'
+    color: stale ? '#475569' : remaining > 30 ? '#166534' : remaining > 10 ? '#92400e' : '#b91c1c'
   }
 }
 
