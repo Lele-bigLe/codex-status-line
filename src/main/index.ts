@@ -52,6 +52,7 @@ import { loadPersistedState, savePersistedState } from './services/state'
 import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
 import { TaskMonitor } from './services/tasks'
 import { FeishuNotifier } from './services/feishu'
+import { FeishuReceiver } from './services/feishu-receiver'
 import {
   taskWindowBounds,
   taskNotificationContent,
@@ -114,6 +115,7 @@ let persistedState: PersistedState = {
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
 let taskMonitor: TaskMonitor
 let feishuNotifier: FeishuNotifier
+let feishuReceiver: FeishuReceiver
 let taskChanges: Promise<void> = Promise.resolve()
 let taskSnapshot: TasksSnapshot = { tasks: [], monitoring: false }
 const taskNotifications = new Set<Notification>()
@@ -445,6 +447,9 @@ if (hasSingleInstanceLock) {
     )
     await taskMonitor.load()
     await taskMonitor.setEnabled(persistedState.settings.taskMonitoring)
+    feishuReceiver = new FeishuReceiver(() => taskSnapshot,
+      (status) => sendToRenderers('codex-status:feishu-receiver-updated', status))
+    void feishuReceiver.configure(feishuNotifier.getSettings())
 
     if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {
       queuePersistState()
@@ -491,6 +496,7 @@ app.on('before-quit', (event) => {
   }
   isQuitting = true
   feishuNotifier?.stop()
+  feishuReceiver?.stop()
   clearInterval(trayTimer)
   clearRefreshTimer()
   clearCodexAuthWatcher()
@@ -507,9 +513,15 @@ function registerIpcHandlers(): void {
     requirePanel(event)
     return feishuNotifier.getSettings()
   })
-  ipcMain.handle('codex-status:save-feishu-settings', (event, settings: unknown) => {
+  ipcMain.handle('codex-status:save-feishu-settings', async (event, settings: unknown) => {
     requirePanel(event)
-    return feishuNotifier.save(settings)
+    const saved = await feishuNotifier.save(settings)
+    void feishuReceiver.configure(saved)
+    return saved
+  })
+  ipcMain.handle('codex-status:get-feishu-receiver-status', (event) => {
+    requirePanel(event)
+    return feishuReceiver.getStatus()
   })
   ipcMain.handle('codex-status:test-feishu-notification', (event) => {
     requirePanel(event)

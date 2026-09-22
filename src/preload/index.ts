@@ -24,6 +24,8 @@ const CHANNELS = {
 } as const
 
 const api: CodexStatusApi = {
+  getFeishuReceiverStatus: () => ipcRenderer.invoke('codex-status:get-feishu-receiver-status'),
+  onFeishuReceiverUpdated: (listener) => subscribe('codex-status:feishu-receiver-updated', listener),
   getFeishuSettings: () => ipcRenderer.invoke('codex-status:get-feishu-settings'),
   saveFeishuSettings: (settings) => ipcRenderer.invoke('codex-status:save-feishu-settings', settings),
   testFeishuNotification: () => ipcRenderer.invoke('codex-status:test-feishu-notification'),

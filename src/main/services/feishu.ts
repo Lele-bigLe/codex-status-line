@@ -32,7 +32,28 @@ function validateSettings(value: unknown): FeishuSettings {
     enabled: input.enabled,
     mentionAll: input.mentionAll ?? DEFAULT_FEISHU_SETTINGS.mentionAll,
     webhook: input.webhook.trim(),
-    secret: input.secret.trim()
+    secret: input.secret.trim(),
+    receiveEnabled: input.receiveEnabled === true,
+    appId: typeof input.appId === 'string' ? input.appId.trim() : '',
+    appSecret: typeof input.appSecret === 'string' ? input.appSecret.trim() : '',
+    allowedChatId: typeof input.allowedChatId === 'string' ? input.allowedChatId.trim() : '',
+    allowedUserId: typeof input.allowedUserId === 'string' ? input.allowedUserId.trim() : '',
+    executionEnabled: input.executionEnabled === true,
+    executionThreadId: typeof input.executionThreadId === 'string' ? input.executionThreadId.trim() : '',
+    codexExecutable: typeof input.codexExecutable === 'string' ? input.codexExecutable.trim() : ''
+  }
+  if (settings.codexExecutable.length > 1024 || /[\r\n\0]/.test(settings.codexExecutable) ||
+    settings.executionThreadId.length > 128 || (settings.executionEnabled &&
+      (!settings.receiveEnabled || !/^[a-fA-F0-9-]{36}$/.test(settings.executionThreadId)))) {
+    throw new Error('启用 Codex 执行前请启用消息接收，并填写测试会话 ID。')
+  }
+  if ([settings.appId, settings.appSecret, settings.allowedChatId, settings.allowedUserId]
+    .some(value => value.length > 256 || /[\r\n]/.test(value))) {
+    throw new Error('飞书应用配置格式无效 / Invalid Feishu app settings')
+  }
+  if (settings.receiveEnabled && (!/^cli_[a-zA-Z0-9]+$/.test(settings.appId) || !settings.appSecret ||
+    !/^oc_[a-zA-Z0-9_-]+$/.test(settings.allowedChatId) || !/^ou_[a-zA-Z0-9_-]+$/.test(settings.allowedUserId))) {
+    throw new Error('请填写应用凭据、允许的群 ID（oc_）和用户 Open ID（ou_） / Complete app credentials and allowed chat/user IDs')
   }
   if (settings.webhook) {
     // 只接受飞书官方群机器人地址，避免把通知和签名发送到其他服务。

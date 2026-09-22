@@ -542,7 +542,7 @@ body {
   overscroll-behavior: contain;
   overflow-x: hidden;
   scrollbar-gutter: auto;
-  padding: 20px 24px;
+  padding: 20px;
 }
 
 .panel__content::-webkit-scrollbar {
@@ -774,31 +774,85 @@ body {
   display: flex;
   flex-direction: column;
   overflow: visible;
+  gap: 16px;
 }
 
 .settings-section {
-  padding: 14px 0 16px;
-  border-top: 1px solid var(--panel-line);
+  padding: 18px;
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--panel-bg);
 }
 
-.settings-section:first-child {
-  padding-top: 0;
-  border-top: 0;
+.settings-section[hidden] {
+  display: none;
+}
+
+.settings-categories {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--panel-line);
+}
+
+.settings-categories button {
+  min-height: 36px;
+  border-radius: 8px;
+  color: var(--panel-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.settings-categories button[aria-pressed='true'] {
+  background: var(--panel-accent-soft);
+  color: var(--panel-accent);
+  font-weight: 600;
+}
+
+.settings-categories button i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--panel-warning);
+}
+
+.settings-categories button:focus-visible,
+.panel__nav button:focus-visible {
+  outline: 2px solid var(--panel-accent);
+  outline-offset: -2px;
+}
+
+.panel__body--settings {
+  background: var(--panel-raised);
+}
+
+.panel__body--settings .panel__header {
+  margin: 0 0 16px;
+}
+
+.account-card {
+  padding: 16px;
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--panel-raised);
 }
 
 .settings-section__title {
-  margin-bottom: 12px;
-  color: var(--panel-muted);
-  font-size: 12px;
+  margin-bottom: 18px;
+  color: var(--panel-text);
+  font-size: 14px;
   font-weight: 640;
   line-height: 1;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .setting-field {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: 80px minmax(0, 1fr);
   align-items: start;
   gap: 12px;
 }
@@ -1011,7 +1065,26 @@ body {
 
 .feishu-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.receiver-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.receiver-settings h3 { font-size: 14px; }
+.receiver-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.receiver-toggle input { accent-color: var(--panel-accent); }
+.receiver-status {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--panel-inset);
+  color: var(--panel-text-2);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .inline-input:focus-within {
@@ -1182,9 +1255,15 @@ body {
 }
 
 .connection-details {
-  margin-top: 20px;
-  border-top: 1px solid var(--panel-line);
+  margin-top: 14px;
+  padding: 0 14px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
   font-size: 12px;
+}
+
+.connection-details[open] {
+  padding-bottom: 14px;
 }
 .connection-details summary {
   padding: 14px 2px;

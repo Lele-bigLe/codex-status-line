@@ -106,6 +106,8 @@ export interface RendererCommandPayload {
 }
 
 export interface CodexStatusApi {
+  getFeishuReceiverStatus: () => Promise<import('./feishu').FeishuReceiverStatus>
+  onFeishuReceiverUpdated: (listener: (status: import('./feishu').FeishuReceiverStatus) => void) => () => void
   getFeishuSettings: () => Promise<import('./feishu').FeishuSettings>
   saveFeishuSettings: (settings: import('./feishu').FeishuSettings) => Promise<import('./feishu').FeishuSettings>
   testFeishuNotification: () => Promise<void>

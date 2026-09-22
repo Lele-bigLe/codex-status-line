@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import appIcon from '../../../build/icon.png'
 import { TaskList } from './components/TaskList'
+import { FeishuReceiverSettings } from './components/FeishuReceiverSettings'
 import type { TasksSnapshot, TaskWindowState } from '../../shared/tasks'
 import {
   DEFAULT_FEISHU_SETTINGS,
@@ -182,6 +183,7 @@ function App(): React.JSX.Element {
   })
   const [windowRole, setWindowRole] = useState<RendererWindowRole>('capsule')
   const [panelView, setPanelView] = useState<PanelView>('details')
+  const [settingsCategory, setSettingsCategory] = useState<'general' | 'appearance' | 'tasks' | 'feishu' | 'receiver'>('general')
   const [customRefreshInput, setCustomRefreshInput] = useState(
     String(DEFAULT_SETTINGS.refreshIntervalSeconds)
   )
@@ -319,10 +321,8 @@ function App(): React.JSX.Element {
   }, [])
 
   const copy = COPY[settings.locale]
-  const feishuDirty = feishuSettings.enabled !== savedFeishuSettings.enabled ||
-    feishuSettings.mentionAll !== savedFeishuSettings.mentionAll ||
-    feishuSettings.webhook !== savedFeishuSettings.webhook ||
-    feishuSettings.secret !== savedFeishuSettings.secret
+  const feishuDirty = (Object.keys(DEFAULT_FEISHU_SETTINGS) as (keyof FeishuSettings)[])
+    .some(key => feishuSettings[key] !== savedFeishuSettings[key])
   const canRefresh = snapshot.canRefresh !== false
   const fixedRefreshValues = REFRESH_INTERVAL_OPTIONS.map((option) => String(option))
   const isCustomRefreshInterval = !fixedRefreshValues.includes(
@@ -772,7 +772,7 @@ function App(): React.JSX.Element {
         {panelView === 'details' ? (
           <div className="panel__body panel__body--details">
             <div className="panel__content">
-              <div className="panel__header panel__header--details">
+              <div className="panel__header panel__header--details account-card">
                 <div>
                   <p className="panel__eyebrow">{copy.account}</p>
                   <h2 className="panel__account" title={snapshot.account?.label}>
@@ -844,7 +844,7 @@ function App(): React.JSX.Element {
                 </div>
               ) : null}
 
-              <details className="connection-details">
+              <details className="connection-details" open={snapshot.rateLimitSource === 'none'}>
                 <summary>
                   {copy.diagnostics}
                   <span>{sourceLabel}</span>
@@ -893,7 +893,20 @@ function App(): React.JSX.Element {
           </div>
         ) : (
           <div className="panel__body panel__body--settings">
-            <div className="panel__content">
+            <nav className="settings-categories" aria-label={settings.locale === 'en-US' ? 'Settings categories' : '设置分类'}>
+              {([
+                ['general', settings.locale === 'en-US' ? 'General' : '通用'],
+                ['appearance', settings.locale === 'en-US' ? 'Appearance' : '外观'],
+                ['tasks', settings.locale === 'en-US' ? 'Tasks' : '任务通知'],
+                ['feishu', settings.locale === 'en-US' ? 'Feishu' : '飞书通知'],
+                ['receiver', settings.locale === 'en-US' ? 'Receive' : '消息接收']
+              ] as const).map(([category, label]) => <button key={category} type="button"
+                aria-pressed={settingsCategory === category} aria-controls="settings-content"
+                onClick={() => setSettingsCategory(category)}>{label}
+                {(category === 'feishu' || category === 'receiver') && feishuDirty ? <i aria-label={settings.locale === 'en-US' ? 'Unsaved changes' : '有未保存修改'} /> : null}
+              </button>)}
+            </nav>
+            <div className="panel__content" id="settings-content" key={settingsCategory}>
               <div className="panel__header">
                 <p className="panel__intro">{copy.settingsIntro}</p>
               </div>
@@ -905,7 +918,7 @@ function App(): React.JSX.Element {
               ) : null}
 
               <div className="settings-list">
-                <div className="settings-section">
+                <div className="settings-section" hidden={settingsCategory !== 'tasks'}>
                   <p className="settings-section__title">{settings.locale === 'en-US' ? 'Tasks & notifications' : '任务与通知'}</p>
                   {([
                     ['taskMonitoring', settings.locale === 'en-US' ? 'Monitor local tasks' : '本机任务监视'],
@@ -918,7 +931,7 @@ function App(): React.JSX.Element {
                   </div>)}
                   <p className="task-help">{settings.locale === 'en-US' ? 'Desktop notifications require OS permission and show the title and request summary. Desktop and Feishu notifications have separate switches. Muted or removed sessions do not notify; historical results are not replayed.' : '桌面通知需系统允许，会显示标题和本轮需求摘要。桌面与飞书通知分别开关；静音或移除的会话不提醒，重启监视不补发历史通知。'}</p>
                 </div>
-                <div className="settings-section">
+                <div className="settings-section" hidden={settingsCategory !== 'feishu'}>
                   <p className="settings-section__title">{settings.locale === 'en-US' ? 'Feishu mobile notifications' : '飞书手机通知'}</p>
                   <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
                     aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Feishu settings' : '飞书配置'}>
@@ -958,12 +971,6 @@ function App(): React.JSX.Element {
                       </span>
                     </label>
                     <div className="feishu-actions">
-                      <button className="ghost-button ghost-button--accent" type="button" disabled={!feishuDirty}
-                        onClick={() => { void saveFeishuSettings() }}>
-                        {feishuBusy === 'save' ? (settings.locale === 'en-US' ? 'Saving…' : '保存中…')
-                          : feishuDirty ? (settings.locale === 'en-US' ? 'Save settings' : '保存配置')
-                          : (settings.locale === 'en-US' ? 'Saved' : '已保存')}
-                      </button>
                       <button className="ghost-button" type="button" disabled={feishuDirty || !savedFeishuSettings.webhook}
                         onClick={() => { void testFeishuNotification() }}>
                         {feishuBusy === 'test' ? (settings.locale === 'en-US' ? 'Sending…' : '发送中…')
@@ -986,7 +993,14 @@ function App(): React.JSX.Element {
                   </p>
                   {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
                 </div>
-                <div className="settings-section">
+                <div className="settings-section" hidden={settingsCategory !== 'receiver'}>
+                  <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
+                    aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Message reception settings' : '消息接收设置'}>
+                    <FeishuReceiverSettings settings={feishuSettings} onChange={setFeishuSettings} english={settings.locale === 'en-US'} />
+                  </fieldset>
+                  {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
+                </div>
+                <div className="settings-section" hidden={settingsCategory !== 'general'}>
                   <p className="settings-section__title">{copy.groupRefresh}</p>
                   <SettingField label={copy.refreshMode}>
                     <SegmentedControl
@@ -1046,7 +1060,7 @@ function App(): React.JSX.Element {
                   </SettingField>
                 </div>
 
-                <div className="settings-section">
+                <div className="settings-section" hidden={settingsCategory !== 'appearance'}>
                   <p className="settings-section__title">{copy.groupDisplay}</p>
                   <SettingField label={copy.theme}>
                     <SegmentedControl
@@ -1137,7 +1151,7 @@ function App(): React.JSX.Element {
                   </SettingField>
                 </div>
 
-                <div className="settings-section">
+                <div className="settings-section" hidden={settingsCategory !== 'general'}>
                   <p className="settings-section__title">{copy.groupGeneral}</p>
                   <div className="setting-row">
                     <span>{copy.launchAtLogin}</span>
@@ -1160,14 +1174,21 @@ function App(): React.JSX.Element {
                 <ChevronLeftIcon />
                 <span>{copy.back}</span>
               </button>
-              <button
+              {settingsCategory === 'feishu' || settingsCategory === 'receiver' ? <button
+                className="ghost-button ghost-button--accent" type="button"
+                disabled={!feishuLoaded || Boolean(feishuBusy) || !feishuDirty}
+                onClick={() => { void saveFeishuSettings() }}>
+                {feishuBusy === 'save' ? (settings.locale === 'en-US' ? 'Saving…' : '保存中…')
+                  : feishuDirty ? (settings.locale === 'en-US' ? 'Save settings' : '保存配置')
+                  : (settings.locale === 'en-US' ? 'Saved' : '已保存')}
+              </button> : <button
                 className="ghost-button ghost-button--accent"
                 onClick={closePanel}
                 type="button"
               >
                 <span>{copy.done}</span>
                 <ChevronRightIcon />
-              </button>
+              </button>}
             </div>
           </div>
         )}
