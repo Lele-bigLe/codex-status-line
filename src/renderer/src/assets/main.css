@@ -1,5 +1,6 @@
 @import './base.css';
 @import './tasks.css';
+@import './automation.css';
 
 body {
   background: transparent;

@@ -2,7 +2,7 @@ export type PercentageMode = 'remaining' | 'used'
 export type RefreshMode = 'auto' | 'manual'
 export type LocaleCode = 'zh-CN' | 'en-US'
 export type RateLimitSource = 'official' | 'cache' | 'none'
-export type PanelView = 'details' | 'settings' | 'tasks'
+export type PanelView = 'details' | 'settings' | 'tasks' | 'schedules'
 export type RendererWindowRole = 'capsule' | 'panel' | 'tasks'
 export type CapsuleViewMode = 'capsule' | 'orb'
 export type DockEdge = 'left' | 'right'
@@ -106,6 +106,13 @@ export interface RendererCommandPayload {
 }
 
 export interface CodexStatusApi {
+  getAutomation: () => Promise<import('./automation').AutomationSnapshot>
+  refreshAutomation: () => Promise<import('./automation').AutomationSnapshot>
+  consumeResetCredit: (accountKey: string) => Promise<import('./automation').AutomationSnapshot>
+  saveSchedule: (input: import('./automation').ScheduleInput) => Promise<import('./automation').AutomationSnapshot>
+  setScheduleEnabled: (id: string, enabled: boolean) => Promise<import('./automation').AutomationSnapshot>
+  deleteSchedule: (id: string) => Promise<import('./automation').AutomationSnapshot>
+  onAutomationUpdated: (listener: (snapshot: import('./automation').AutomationSnapshot) => void) => () => void
   getFeishuSettings: () => Promise<import('./feishu').FeishuSettings>
   saveFeishuSettings: (settings: import('./feishu').FeishuSettings) => Promise<import('./feishu').FeishuSettings>
   testFeishuNotification: () => Promise<void>

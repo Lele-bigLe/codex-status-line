@@ -24,6 +24,13 @@ const CHANNELS = {
 } as const
 
 const api: CodexStatusApi = {
+  getAutomation: () => ipcRenderer.invoke('codex-status:get-automation'),
+  refreshAutomation: () => ipcRenderer.invoke('codex-status:refresh-automation'),
+  consumeResetCredit: (accountKey) => ipcRenderer.invoke('codex-status:consume-reset-credit', accountKey),
+  saveSchedule: (input) => ipcRenderer.invoke('codex-status:save-schedule', input),
+  setScheduleEnabled: (id, enabled) => ipcRenderer.invoke('codex-status:enable-schedule', id, enabled),
+  deleteSchedule: (id) => ipcRenderer.invoke('codex-status:delete-schedule', id),
+  onAutomationUpdated: (listener) => subscribe('codex-status:automation-updated', listener),
   getFeishuSettings: () => ipcRenderer.invoke('codex-status:get-feishu-settings'),
   saveFeishuSettings: (settings) => ipcRenderer.invoke('codex-status:save-feishu-settings', settings),
   testFeishuNotification: () => ipcRenderer.invoke('codex-status:test-feishu-notification'),

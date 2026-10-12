@@ -66,6 +66,7 @@ export function sessionMetadata(value: unknown): SessionMetadata | undefined {
     return
   // 子代理与主会话会分别结束；只提醒用户直接使用的会话。
   if (typeof payload.source === 'object') return
+  if (payload.service_name === 'codex-status-cycle-trigger' || payload.serviceName === 'codex-status-cycle-trigger') return
   return {
     threadId: payload.id,
     cwd: payload.cwd,

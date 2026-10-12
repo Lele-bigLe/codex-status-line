@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import appIcon from '../../../build/icon.png'
 import { TaskList } from './components/TaskList'
+import { AutomationPanel } from './components/AutomationPanel'
 import type { TasksSnapshot, TaskWindowState } from '../../shared/tasks'
 import {
   DEFAULT_FEISHU_SETTINGS,
@@ -765,6 +766,9 @@ function App(): React.JSX.Element {
           }}>
             {settings.locale === 'en-US' ? 'Tasks ↗' : '任务 ↗'}
           </button>
+          <button type="button" aria-pressed={panelView === 'schedules'} onClick={() => setPanelView('schedules')}>
+            {settings.locale === 'en-US' ? 'Schedules' : '定时任务'}
+          </button>
           <button type="button" aria-pressed={panelView === 'settings'} onClick={openSettings}>
             {copy.settings}
           </button>
@@ -844,6 +848,8 @@ function App(): React.JSX.Element {
                 </div>
               ) : null}
 
+              <AutomationPanel view="credits" locale={settings.locale} now={now} />
+
               <details className="connection-details">
                 <summary>
                   {copy.diagnostics}
@@ -889,6 +895,12 @@ function App(): React.JSX.Element {
                 <HistoryIcon />
                 <span>{snapshot.isRefreshing ? copy.syncing : copy.refresh}</span>
               </button>
+            </div>
+          </div>
+        ) : panelView === 'schedules' ? (
+          <div className="panel__body panel__body--settings">
+            <div className="panel__content">
+              <AutomationPanel view="schedules" locale={settings.locale} now={now} />
             </div>
           </div>
         ) : (

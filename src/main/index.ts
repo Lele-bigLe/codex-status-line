@@ -10,6 +10,7 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   screen,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
@@ -52,6 +53,7 @@ import { loadPersistedState, savePersistedState } from './services/state'
 import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
 import { TaskMonitor } from './services/tasks'
 import { FeishuNotifier } from './services/feishu'
+import { AutomationService } from './services/automation'
 import {
   taskWindowBounds,
   taskNotificationContent,
@@ -114,6 +116,7 @@ let persistedState: PersistedState = {
 let currentSnapshot: UsageSnapshot = createEmptySnapshot()
 let taskMonitor: TaskMonitor
 let feishuNotifier: FeishuNotifier
+let automation: AutomationService
 let taskChanges: Promise<void> = Promise.resolve()
 let taskSnapshot: TasksSnapshot = { tasks: [], monitoring: false }
 const taskNotifications = new Set<Notification>()
@@ -253,7 +256,7 @@ function createPanelWindow(): BrowserWindow {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     skipTaskbar: true,
     autoHideMenuBar: true,
     icon: appIcon,
@@ -446,6 +449,19 @@ if (hasSingleInstanceLock) {
     await taskMonitor.load()
     await taskMonitor.setEnabled(persistedState.settings.taskMonitoring)
 
+    automation = new AutomationService(
+      join(app.getPath('userData'), 'codex-status-automation.json'),
+      join(app.getPath('userData'), 'codex-cycle-trigger'),
+      (snapshot) => sendToRenderers('codex-status:automation-updated', snapshot),
+      () => { if (!isQuitting) void refreshStatus({ forceCredentialCheck: true }) }
+    )
+    await automation.load()
+    currentAccountKey = (await readOfficialCodexCredentials()).credentials?.key
+    await automation.accountChanged(currentAccountKey).catch(() => {})
+    await automation.start()
+    powerMonitor.on('suspend', () => automation.suspend())
+    powerMonitor.on('resume', () => { void automation.resume() })
+
     if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {
       queuePersistState()
     }
@@ -483,7 +499,7 @@ app.on('before-quit', (event) => {
   if (taskMonitor && !tasksFlushed) {
     event.preventDefault()
     void taskChanges
-      .then(() => taskMonitor.stop())
+      .then(() => Promise.all([taskMonitor.stop(), automation?.stop()]))
       .finally(() => {
         tasksFlushed = true
         app.quit()
@@ -500,9 +516,35 @@ function registerIpcHandlers(): void {
   // 凭据仅供设置窗口读写，不随通用偏好广播给悬浮窗和任务窗口。
   const requirePanel = (event: IpcMainInvokeEvent): void => {
     if (event.sender.id !== panelWindow?.webContents.id || event.senderFrame !== event.sender.mainFrame) {
-      throw new Error('请在设置窗口配置飞书 / Open settings to configure Feishu')
+      throw new Error('请在详情窗口操作 / Open the details panel for this action')
     }
   }
+  ipcMain.handle('codex-status:get-automation', (event) => {
+    requirePanel(event)
+    return automation.snapshot()
+  })
+  ipcMain.handle('codex-status:refresh-automation', async (event) => {
+    requirePanel(event)
+    await automation.refresh()
+    return automation.snapshot()
+  })
+  ipcMain.handle('codex-status:consume-reset-credit', async (event, accountKey: unknown) => {
+    requirePanel(event)
+    await automation.consumeReset(accountKey)
+    return automation.snapshot()
+  })
+  ipcMain.handle('codex-status:save-schedule', async (event, input: unknown) => {
+    requirePanel(event)
+    return automation.saveSchedule(input)
+  })
+  ipcMain.handle('codex-status:enable-schedule', async (event, id: unknown, enabled: unknown) => {
+    requirePanel(event)
+    return automation.setEnabled(id, enabled)
+  })
+  ipcMain.handle('codex-status:delete-schedule', async (event, id: unknown) => {
+    requirePanel(event)
+    return automation.remove(id)
+  })
   ipcMain.handle('codex-status:get-feishu-settings', (event) => {
     requirePanel(event)
     return feishuNotifier.getSettings()
@@ -612,7 +654,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(CHANNELS.openPanel, async (_, view: PanelView) => {
     if (view === 'settings' && tasksWindow?.isVisible()) tasksWindow.hide()
-    openPanelWindow(view === 'tasks' || view === 'settings' ? view : 'details')
+    openPanelWindow(view === 'tasks' || view === 'settings' || view === 'schedules' ? view : 'details')
   })
 
   ipcMain.handle(CHANNELS.moveCapsuleWindow, async (_, payload: CapsuleDragMovePayload) => {
@@ -680,6 +722,10 @@ function refreshTrayMenu(): void {
     {
       label: persistedState.settings.locale === 'en-US' ? 'Tasks' : '任务列表',
       click: () => openPanelWindow('tasks')
+    },
+    {
+      label: persistedState.settings.locale === 'en-US' ? 'Schedules' : '定时任务',
+      click: () => openPanelWindow('schedules')
     },
     {
       label: labels.refresh,
@@ -920,6 +966,7 @@ async function checkForUpdates(): Promise<void> {
 
 function prepareToQuit(): void {
   isQuitting = true
+  automation?.suspend()
   clearInterval(trayTimer)
   clearRefreshTimer()
   clearCodexAuthWatcher()
@@ -941,6 +988,7 @@ function watchCodexAuthFile(): void {
     }
 
     credentialRevision += 1
+    automation?.invalidate()
     const revision = credentialRevision
     void readOfficialCodexCredentials().then((lookup) => {
       if (isQuitting || revision !== credentialRevision) return
@@ -953,6 +1001,7 @@ function watchCodexAuthFile(): void {
 function syncAccountIdentity(accountKey: string | undefined): void {
   if (currentAccountKey === accountKey) return
   currentAccountKey = accountKey
+  void automation?.accountChanged(accountKey).catch(() => {})
   clearQuotaCache()
   currentSnapshot = { ...createEmptySnapshot(), isRefreshing: true }
   broadcastSnapshot()
