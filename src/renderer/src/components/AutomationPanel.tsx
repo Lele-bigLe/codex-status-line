@@ -80,9 +80,7 @@ export function AutomationPanel({
   const [endMode, setEndMode] = useState<'never' | 'date'>('never')
   const [endsOn, setEndsOn] = useState(defaultEndDate)
   const active = useRef(false)
-  const current = useRef(snapshot)
   const accountKey = useRef<string | undefined>(undefined)
-  current.current = snapshot
 
   useEffect(() => {
     active.current = true
@@ -90,7 +88,6 @@ export function AutomationPanel({
     const accept = (value: AutomationSnapshot): void => {
       if (active.current) {
         received = true
-        current.current = value
         setSnapshot(value)
       }
     }
@@ -100,24 +97,12 @@ export function AutomationPanel({
       .then((value) => {
         if (!received) accept(value)
       })
-      .catch(() => {})
-    const refresh = (): void => {
-      if (document.hidden || current.current.refreshing || current.current.redeeming) return
-      void window.codexStatus
-        .refreshAutomation()
-        .then(accept)
-        .catch(() => {
-          if (active.current) setIssue('账号信息读取失败 / Could not load account information')
-        })
-    }
-    refresh()
-    const timer = window.setInterval(refresh, 60000)
-    document.addEventListener('visibilitychange', refresh)
+      .catch(() => {
+        if (active.current) setIssue('账号信息读取失败 / Could not load account information')
+      })
     return () => {
       active.current = false
       dispose()
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', refresh)
     }
   }, [])
 

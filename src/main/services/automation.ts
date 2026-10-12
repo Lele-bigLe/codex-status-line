@@ -82,6 +82,7 @@ export class AutomationService {
   private issue?: string
   private resetResult?: string
   private refreshPromise?: Promise<AutomationSnapshot>
+  private initialized = false
   private resetPromise?: Promise<AutomationSnapshot>
   private writes: Promise<void> = Promise.resolve()
   private canPersist = true
@@ -209,6 +210,7 @@ export class AutomationService {
     this.revision++
     this.client.cancel()
     this.account = undefined
+    this.initialized = false
     this.resetResult = undefined
     this.publish()
   }
@@ -236,10 +238,12 @@ export class AutomationService {
     })
   }
 
-  refresh(): Promise<AutomationSnapshot> {
+  refresh(force = true): Promise<AutomationSnapshot> {
     if (this.stopped) return Promise.resolve(this.snapshot())
     if (this.resetPromise) return this.resetPromise
     if (this.refreshPromise) return this.refreshPromise
+    if (!force && this.initialized) return Promise.resolve(this.snapshot())
+    this.initialized = true
     const revision = this.revision
     const run = this.client
       .withAccount(undefined, async (_, account) => {

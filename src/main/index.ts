@@ -519,8 +519,9 @@ function registerIpcHandlers(): void {
       throw new Error('请在详情窗口操作 / Open the details panel for this action')
     }
   }
-  ipcMain.handle('codex-status:get-automation', (event) => {
+  ipcMain.handle('codex-status:get-automation', async (event) => {
     requirePanel(event)
+    await automation.refresh(false)
     return automation.snapshot()
   })
   ipcMain.handle('codex-status:refresh-automation', async (event) => {
