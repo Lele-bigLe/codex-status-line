@@ -53,6 +53,7 @@ import { createTrayBitmap, getTrayIconState } from './services/tray-icon'
 import { TaskMonitor } from './services/tasks'
 import { FeishuNotifier } from './services/feishu'
 import { FeishuReceiver } from './services/feishu-receiver'
+import { CodexSession } from './services/codex-session'
 import {
   taskWindowBounds,
   taskNotificationContent,
@@ -130,9 +131,13 @@ function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
   if (feishuNotifier.getStatus().enabled) {
     void feishuNotifier.send(() => {
       if (isQuitting || !taskSnapshot.monitoring) return undefined
-      const eligible = completed.filter((task) => taskSnapshot.tasks.some(
-        (current) => current.threadId === task.threadId && !current.muted
-      ))
+      const eligible = completed.filter(
+        (task) =>
+          !feishuReceiver?.handlesTurn(task.threadId, task.turnId) &&
+          taskSnapshot.tasks.some(
+            (current) => current.threadId === task.threadId && !current.muted
+          )
+      )
       return eligible.length
         ? taskNotificationContent(eligible, persistedState.settings.locale === 'en-US')
         : undefined
@@ -448,7 +453,11 @@ if (hasSingleInstanceLock) {
     await taskMonitor.load()
     await taskMonitor.setEnabled(persistedState.settings.taskMonitoring)
     feishuReceiver = new FeishuReceiver(() => taskSnapshot,
-      (status) => sendToRenderers('codex-status:feishu-receiver-updated', status))
+      (status) => sendToRenderers('codex-status:feishu-receiver-updated', status),
+      async (grant, settings, active) => {
+        await feishuNotifier.authorizeSession(grant, settings, active)
+        sendToRenderers('codex-status:feishu-permission-updated', grant)
+      }, (task) => taskMonitor.addSession(task))
     void feishuReceiver.configure(feishuNotifier.getSettings())
 
     if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {
@@ -512,6 +521,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle('codex-status:get-feishu-settings', (event) => {
     requirePanel(event)
     return feishuNotifier.getSettings()
+  })
+  ipcMain.handle('codex-status:check-codex-runtime', async (event, executable: unknown) => {
+    requirePanel(event)
+    if (typeof executable !== 'string' || executable.length > 1024 || /[\r\n\0]/.test(executable)) throw new Error('Codex 路径格式无效。')
+    return new CodexSession(executable.trim(), () => {}).check()
   })
   ipcMain.handle('codex-status:save-feishu-settings', async (event, settings: unknown) => {
     requirePanel(event)

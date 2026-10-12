@@ -1,16 +1,57 @@
 import { useEffect, useState } from 'react'
-import type { FeishuSettings, FeishuReceiverStatus } from '../../../shared/feishu'
+import {
+  normalizeExecutionThreads,
+  type FeishuSettings,
+  type FeishuReceiverStatus,
+  type CodexRuntimeInfo,
+  type CodexPermissionMode
+} from '../../../shared/feishu'
+import type { TaskRecord } from '../../../shared/tasks'
 
 export function FeishuReceiverSettings({
   settings,
+  tasks,
   onChange,
   english
 }: {
   settings: FeishuSettings
+  tasks: TaskRecord[]
   onChange: (settings: FeishuSettings) => void
   english: boolean
 }): React.JSX.Element {
   const [status, setStatus] = useState<FeishuReceiverStatus>({ phase: 'stopped' })
+  const [threadInput, setThreadInput] = useState('')
+  const [grantIssue, setGrantIssue] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState<{
+    path: string
+    info?: CodexRuntimeInfo
+    issue?: string
+  }>()
+  const addThread = (threadId: string): void => {
+    try {
+      const executionThreads = normalizeExecutionThreads([
+        ...settings.executionThreads,
+        { threadId: threadId.trim(), permission: 'read-only' }
+      ])
+      onChange({ ...settings, executionThreads })
+      setThreadInput('')
+      setGrantIssue('')
+    } catch (error) {
+      setGrantIssue(error instanceof Error ? error.message : '会话授权无效。')
+    }
+  }
+  const checkRuntime = async (): Promise<void> => {
+    const path = settings.codexExecutable
+    setChecking(true)
+    try {
+      setCheckResult({ path, info: await window.codexStatus.checkCodexRuntime(path) })
+    } catch (error) {
+      setCheckResult({ path, issue: error instanceof Error ? error.message : '程序检查失败。' })
+    } finally {
+      setChecking(false)
+    }
+  }
   useEffect(() => {
     let active = true
     let received = false
@@ -57,8 +98,8 @@ export function FeishuReceiverSettings({
       <h3>{english ? 'Feishu conversation · test stage' : '飞书会话交互 · 测试阶段'}</h3>
       <p className="task-help">
         {english
-          ? 'Uses a self-built app bot. By default, only locates sessions. Enable execution below to chat in one specified test session.'
-          : '使用自建应用机器人。默认仅验证定位；开启下方 Codex 执行后，可在指定的测试会话中真实对话。'}
+          ? 'Enable execution below, then grant read-only or project-write access in the Feishu session card. You can also manage authorizations here.'
+          : '开启下方的执行开关后，可直接在飞书会话卡片中选择“授予只读”或“允许修改项目”；也可在此管理授权。'}
       </p>
       <label className="receiver-toggle">
         <input
@@ -125,19 +166,101 @@ export function FeishuReceiverSettings({
           checked={settings.executionEnabled}
           onChange={(event) => onChange({ ...settings, executionEnabled: event.target.checked })}
         />
-        {english ? 'Enable execution in the test session' : '在测试会话中启用真实执行'}
+        {english ? 'Enable execution in authorized sessions' : '在已授权会话中启用真实执行'}
       </label>
+      {settings.executionThreads.map((grant, index) => {
+        const task = tasks.find((item) => item.threadId === grant.threadId)
+        return (
+          <div className="session-grant" key={grant.threadId}>
+            <strong>{task?.title || grant.threadId}</strong>
+            <small>
+              {task?.cwd ? `${task.cwd}\n` : ''}
+              {grant.threadId}
+            </small>
+            <div className="session-grant__actions">
+              <select
+                aria-label={`${english ? 'Permissions' : '会话权限'} ${task?.title || grant.threadId}`}
+                value={grant.permission}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    executionThreads: settings.executionThreads.map((item, position) =>
+                      position === index
+                        ? { ...item, permission: event.target.value as CodexPermissionMode }
+                        : item
+                    )
+                  })
+                }
+              >
+                <option value="read-only">
+                  {english ? 'Read only · ask when needed' : '只读 · 必要时审批'}
+                </option>
+                <option value="workspace-write">
+                  {english ? 'Project write · ask when needed' : '项目写入 · 必要时审批'}
+                </option>
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    executionThreads: settings.executionThreads.filter(
+                      (item) => item.threadId !== grant.threadId
+                    )
+                  })
+                }
+              >
+                {english ? 'Remove' : '移除授权'}
+              </button>
+            </div>
+          </div>
+        )
+      })}
       <label className="feishu-field">
-        <span>{english ? 'Allowed test session ID' : '允许执行的测试会话 ID'}</span>
-        <span className="inline-input inline-input--secret">
-          <input
-            value={settings.executionThreadId}
-            maxLength={128}
-            spellCheck={false}
-            onChange={(event) => onChange({ ...settings, executionThreadId: event.target.value })}
-          />
-        </span>
+        <span>{english ? 'Authorize a monitored session' : '从监视列表添加会话'}</span>
+        <select
+          value=""
+          onChange={(event) => {
+            if (event.target.value) addThread(event.target.value)
+          }}
+        >
+          <option value="">{english ? 'Choose a session…' : '选择要授权的会话…'}</option>
+          {tasks
+            .filter(
+              (task) => !settings.executionThreads.some((grant) => grant.threadId === task.threadId)
+            )
+            .map((task) => (
+              <option key={task.threadId} value={task.threadId}>
+                {task.title || task.threadId} · {task.cwd}
+              </option>
+            ))}
+        </select>
       </label>
+      <div className="session-grant__actions">
+        <label className="inline-input inline-input--secret">
+          <input
+            aria-label={english ? 'Session ID' : '手动填写会话 ID'}
+            placeholder={english ? 'Or enter a session ID' : '也可以粘贴会话 ID'}
+            value={threadInput}
+            maxLength={128}
+            onChange={(event) => setThreadInput(event.target.value)}
+          />
+        </label>
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={!threadInput.trim()}
+          onClick={() => addThread(threadInput)}
+        >
+          {english ? 'Add' : '添加'}
+        </button>
+      </div>
+      {grantIssue ? (
+        <p className="settings-error" role="alert">
+          {grantIssue}
+        </p>
+      ) : null}
       <label className="feishu-field">
         <span>{english ? 'Codex executable (optional)' : 'Codex 可执行文件路径（可选）'}</span>
         <span className="inline-input inline-input--secret">
@@ -145,17 +268,69 @@ export function FeishuReceiverSettings({
             value={settings.codexExecutable}
             maxLength={1024}
             placeholder={
-              english ? 'Auto-detect Codex CLI on PATH' : '留空自动查找 PATH 中的 Codex CLI'
+              english ? 'Auto-discover installed Codex when empty' : '留空自动查找已安装的 Codex'
             }
             spellCheck={false}
             onChange={(event) => onChange({ ...settings, codexExecutable: event.target.value })}
           />
         </span>
       </label>
+      <div className="feishu-actions">
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={checking || !settings.codexExecutable}
+          onClick={() => onChange({ ...settings, codexExecutable: '' })}
+        >
+          {english ? 'Use auto-discovery' : '使用自动查找'}
+        </button>
+        <button
+          className="ghost-button ghost-button--accent"
+          type="button"
+          disabled={checking}
+          onClick={() => {
+            void checkRuntime()
+          }}
+        >
+          {checking
+            ? english
+              ? 'Checking…'
+              : '检查中…'
+            : english
+              ? 'Check program'
+              : '检查程序与协议'}
+        </button>
+      </div>
+      {checkResult?.path === settings.codexExecutable ? (
+        <div className="receiver-status" role="status">
+          {checkResult.issue ? (
+            <p className="settings-error">{checkResult.issue}</p>
+          ) : (
+            <>
+              <strong>{english ? 'Protocol connected' : '基础协议连接成功'}</strong>
+              <p>{checkResult.info?.version}</p>
+              <p>{checkResult.info?.executable}</p>
+              <p>
+                {english
+                  ? 'No task submitted. Session compatibility is checked before execution.'
+                  : '未提交任务；具体会话会在执行前检查恢复兼容性。'}
+              </p>
+            </>
+          )}
+        </div>
+      ) : null}
+      {status.codexRuntime ? (
+        <p className="task-help">
+          {english ? 'Last execution program: ' : '最近执行程序：'}
+          {status.codexRuntime.version}
+          <br />
+          {status.codexRuntime.executable}
+        </p>
+      ) : null}
       <p className="task-help">
         {english
-          ? 'Uses your local Codex login and a read-only sandbox. Answers and questions return here; command approvals require an explicit click. File/permission approvals and sensitive inputs require the computer. Do not run this session in another client at the same time. Saving settings or exiting disconnects the current run.'
-          : '使用本机 Codex 登录和只读沙箱。回答、追问会回到飞书，命令审批需明确点击；文件与权限审批、敏感输入需回电脑处理。请勿在其他客户端同时执行这个会话。保存配置或退出程序会断开当前执行连接。'}
+          ? 'New authorizations here default to read only. Project write permits changes inside the session project; approvals show the full command or file diff. Card permission changes are saved for the next turn and require an idle session. Broader permissions require the computer. Sessions execute independently; do not run the same session in another client. Saving settings here disconnects current runs.'
+          : '本页新增授权默认只读。项目写入允许修改会话项目内文件；需要审批时展示完整命令或文件差异。卡片授权会保存并用于下一轮，须等当前轮次结束后更改。超出项目的权限需回电脑处理。不同会话独立运行，同一会话请勿同时在其他客户端执行。本页保存配置会断开当前执行连接。'}
       </p>
       <p className="task-help">
         {english

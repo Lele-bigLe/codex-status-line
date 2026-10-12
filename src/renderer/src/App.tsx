@@ -212,6 +212,14 @@ function App(): React.JSX.Element {
       feishuStatusReceived = true
       setFeishuStatus(status)
     })
+    const disposeFeishuPermission = window.codexStatus.onFeishuPermissionUpdated((grant) => {
+      const apply = (current: FeishuSettings): FeishuSettings => ({
+        ...current,
+        executionThreads: [...current.executionThreads.filter((item) => item.threadId !== grant.threadId), grant]
+      })
+      setFeishuSettings(apply)
+      setSavedFeishuSettings(apply)
+    })
     let taskWindowReceived = false
     const disposeTaskWindow = window.codexStatus.onTaskWindowUpdated((state) => {
       taskWindowReceived = true
@@ -277,6 +285,7 @@ function App(): React.JSX.Element {
 
     return () => {
       active = false
+      disposeFeishuPermission()
       if (dragFrameRef.current !== undefined) window.cancelAnimationFrame(dragFrameRef.current)
       dragFrameRef.current = undefined
       pendingDragRef.current = undefined
@@ -322,7 +331,9 @@ function App(): React.JSX.Element {
 
   const copy = COPY[settings.locale]
   const feishuDirty = (Object.keys(DEFAULT_FEISHU_SETTINGS) as (keyof FeishuSettings)[])
-    .some(key => feishuSettings[key] !== savedFeishuSettings[key])
+    .some(key => key === 'executionThreads'
+      ? JSON.stringify(feishuSettings[key]) !== JSON.stringify(savedFeishuSettings[key])
+      : feishuSettings[key] !== savedFeishuSettings[key])
   const canRefresh = snapshot.canRefresh !== false
   const fixedRefreshValues = REFRESH_INTERVAL_OPTIONS.map((option) => String(option))
   const isCustomRefreshInterval = !fixedRefreshValues.includes(
@@ -996,7 +1007,7 @@ function App(): React.JSX.Element {
                 <div className="settings-section" hidden={settingsCategory !== 'receiver'}>
                   <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
                     aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Message reception settings' : '消息接收设置'}>
-                    <FeishuReceiverSettings settings={feishuSettings} onChange={setFeishuSettings} english={settings.locale === 'en-US'} />
+                    <FeishuReceiverSettings settings={feishuSettings} tasks={tasks.tasks} onChange={setFeishuSettings} english={settings.locale === 'en-US'} />
                   </fieldset>
                   {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
                 </div>

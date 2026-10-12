@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { LocaleCode } from '../../../shared/capsule'
 import type { TaskRecord, TasksSnapshot } from '../../../shared/tasks'
 
-const STATES = ['running', 'completed', 'interrupted', 'unknown'] as const
+const STATES = ['idle', 'running', 'completed', 'interrupted', 'unknown'] as const
 
 export function TaskList({
   snapshot,
@@ -25,8 +25,20 @@ export function TaskList({
 }): React.JSX.Element {
   const en = locale === 'en-US'
   const labels = en
-    ? { running: 'Running', completed: 'Ended', interrupted: 'Interrupted', unknown: 'Unknown' }
-    : { running: '进行中', completed: '本轮结束', interrupted: '已中断', unknown: '状态未知' }
+    ? {
+        idle: 'Not started',
+        running: 'Running',
+        completed: 'Ended',
+        interrupted: 'Interrupted',
+        unknown: 'Unknown'
+      }
+    : {
+        idle: '未开始',
+        running: '进行中',
+        completed: '本轮结束',
+        interrupted: '已中断',
+        unknown: '状态未知'
+      }
   const unknownHint = en
     ? 'No new task status has been received since monitoring was interrupted. No confirmation is needed.'
     : '监视中断后，尚未收到新的任务状态，无需手动确认。'
@@ -214,13 +226,15 @@ export function TaskList({
                   }
                 >
                   <span className="monitor-state-icon" aria-hidden="true">
-                    {task.status === 'completed'
-                      ? '✓'
-                      : task.status === 'interrupted'
-                        ? '×'
-                        : task.status === 'running'
-                          ? '·'
-                          : '?'}
+                    {task.status === 'idle'
+                      ? '○'
+                      : task.status === 'completed'
+                        ? '✓'
+                        : task.status === 'interrupted'
+                          ? '×'
+                          : task.status === 'running'
+                            ? '·'
+                            : '?'}
                   </span>
                   <strong title={title}>{title}</strong>
                   <span

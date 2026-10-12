@@ -14,6 +14,31 @@ function compile(file, replacements = []) {
 
 const routingUrl = compile('../src/main/services/feishu-routing.ts')
 const { FeishuRouter } = await import(routingUrl)
+const { normalizeExecutionThreads } = await import(compile('../src/shared/feishu.ts'))
+
+test('legacy authorization migrates to read-only and malformed or duplicate grants are rejected', () => {
+  const id = '01a0c7ff-4073-7d60-8686-b6fa20d9ba17'
+  assert.deepEqual(normalizeExecutionThreads(undefined, id), [
+    { threadId: id, permission: 'read-only' }
+  ])
+  assert.deepEqual(
+    normalizeExecutionThreads([], id),
+    [],
+    'removing all authorizations must not revive the legacy grant'
+  )
+  assert.throws(
+    () => normalizeExecutionThreads([{ threadId: id, permission: 'danger-full-access' }]),
+    /权限无效/
+  )
+  assert.throws(
+    () =>
+      normalizeExecutionThreads([
+        { threadId: id, permission: 'read-only' },
+        { threadId: id, permission: 'workspace-write' }
+      ]),
+    /重复/
+  )
+})
 const task = (threadId, cwd) => ({ threadId, cwd, title: '同名会话', status: 'completed' })
 const a = task('thread-a', 'D:/project-a')
 const b = task('thread-b', 'D:/project-b')
@@ -79,7 +104,7 @@ test('removed sessions, paused monitoring and restart never fall back to another
   snapshot.monitoring = true
   const restarted = new FeishuRouter(() => snapshot)
   assert.equal(restarted.route('user', '继续', 'receipt-a').target, undefined)
-  assert.match(router.route('user', '新建会话').text, /尚未创建/)
+  assert.match(router.route('user', '新建会话').text, /开启 Codex 执行/)
 })
 
 const fakeSdk = `
@@ -275,18 +300,20 @@ test('execution bridge keeps commands local, forwards full answers and routes qu
   state.sent = []
   const sessionUrl = `data:text/javascript;base64,${Buffer.from(
     `
-    export const state = { starts: [], answers: [] };
+    export const state = { starts: [], answers: [], answerThreads: [] };
     export class CodexSession {
       running = false; awaitingInput = false;
+      constructor(executable, onIssue, options) { this.permission = options?.permission; }
       stop() { this.running = false; }
       async start(task, text, emit) {
-        this.running = true; state.starts.push({ task, text });
-        await emit({ text: '答'.repeat(6500) });
+        this.running = true; this.threadId = task.threadId; state.starts.push({ task, text, permission:this.permission });
+        await emit({ kind: 'answer', text: '答'.repeat(6500) });
         this.awaitingInput = true;
         await emit({ text: '请选择测试代号', promptId: 'question-key', questionId: 'q1' });
       }
       answer(text, key, questionId) {
         state.answers.push({ text, key, questionId }); this.awaitingInput = false;
+        state.answerThreads.push(this.threadId);
         return '已提交你的回答。';
       }
     }
@@ -297,6 +324,10 @@ test('execution bridge keeps commands local, forwards full answers and routes qu
     compile('../src/main/services/feishu-receiver.ts', [
       ["'@larksuiteoapi/node-sdk'", JSON.stringify(sdkUrl)],
       ["'./codex-session'", JSON.stringify(sessionUrl)],
+      [
+        "'node:timers/promises'",
+        JSON.stringify('data:text/javascript,export const setTimeout = async () => {}')
+      ],
       ["'./feishu-routing'", JSON.stringify(routingUrl)]
     ])
   )
@@ -311,7 +342,7 @@ test('execution bridge keeps commands local, forwards full answers and routes qu
     allowedChatId: 'chat',
     allowedUserId: 'user',
     executionEnabled: true,
-    executionThreadId: a.threadId
+    executionThreads: [{ threadId: a.threadId, permission: 'read-only' }]
   })
   const handler = state.clients.at(-1).dispatcher.handlers['im.message.receive_v1']
   let id = 0
@@ -352,9 +383,50 @@ test('execution bridge keeps commands local, forwards full answers and routes qu
   await send('选择会话 1')
   await send('不要执行其他会话')
   assert.equal(session.state.starts.length, 1)
-  assert.match(
-    JSON.parse(state.sent.at(-1).data.content).elements[0].text.content,
-    /仅允许配置的测试会话/
+  assert.match(JSON.parse(state.sent.at(-1).data.content).elements[0].text.content, /尚未授权执行/)
+  await receiver.configure({
+    receiveEnabled: true,
+    appId: 'test',
+    appSecret: 'test',
+    allowedChatId: 'chat',
+    allowedUserId: 'user',
+    executionEnabled: true,
+    executionThreads: [
+      { threadId: a.threadId, permission: 'read-only' },
+      { threadId: b.threadId, permission: 'workspace-write' }
+    ]
+  })
+  const multiHandler = state.clients.at(-1).dispatcher.handlers['im.message.receive_v1']
+  const sendMulti = async (text, parent_id) => {
+    await multiHandler({
+      sender: { sender_type: 'user', sender_id: { open_id: 'user' } },
+      message: {
+        message_id: 'multi-' + ++id,
+        chat_id: 'chat',
+        chat_type: 'group',
+        message_type: 'text',
+        create_time: String(Date.now() + 1000),
+        content: JSON.stringify({ text }),
+        mentions: [{ key: '@bot', id: { open_id: 'bot' } }],
+        parent_id
+      }
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  for (const text of ['项目列表', '选择项目 1', '选择会话 1', '在 A 提问']) await sendMulti(text)
+  const questionA = 'receipt-' + state.sent.length
+  for (const text of ['选择项目 2', '选择会话 1', '在 B 提问']) await sendMulti(text)
+  assert.deepEqual(
+    session.state.starts.slice(-2).map((item) => item.permission),
+    ['read-only', 'workspace-write']
+  )
+  assert.equal(session.state.starts.length, 3, 'B can run while A is awaiting an answer')
+  await sendMulti('回答 A', questionA)
+  await sendMulti('回答 B')
+  assert.deepEqual(
+    session.state.answerThreads.slice(-2),
+    [a.threadId, b.threadId],
+    'reply routing and pending inputs remain isolated per session'
   )
   receiver.stop()
 })

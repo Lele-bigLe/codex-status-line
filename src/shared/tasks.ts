@@ -4,7 +4,7 @@ export interface TaskRecord {
   turnId: string
   cwd: string
   client: 'vscode' | 'cli' | 'unknown'
-  status: 'running' | 'completed' | 'interrupted' | 'unknown'
+  status: 'idle' | 'running' | 'completed' | 'interrupted' | 'unknown'
   updatedAt: string
   title?: string
   startedAt?: string

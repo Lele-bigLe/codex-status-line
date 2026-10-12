@@ -193,13 +193,13 @@ export class TaskMonitor {
           typeof t.threadId !== 'string' ||
           !ID.test(t.threadId) ||
           typeof t.turnId !== 'string' ||
-          !ID.test(t.turnId) ||
+          !(t.status === 'idle' ? t.turnId === '' : ID.test(t.turnId)) ||
           t.id !== `${t.threadId}:${t.turnId}` ||
           typeof t.cwd !== 'string' ||
           t.cwd.length > 4096 ||
           typeof t.updatedAt !== 'string' ||
           !Number.isFinite(Date.parse(t.updatedAt)) ||
-          !['running', 'completed', 'interrupted', 'unknown'].includes(String(t.status)) ||
+          !['idle', 'running', 'completed', 'interrupted', 'unknown'].includes(String(t.status)) ||
           !['vscode', 'cli', 'unknown'].includes(String(t.client))
         )
           continue
@@ -517,10 +517,11 @@ export class TaskMonitor {
     )
       return
     task.startedAt ??= previous?.startedAt
-    task.title = previous?.title
+    task.title = previous?.title ?? this.tasks.get(`${task.threadId}:`)?.title
     task.requestSummary = previous?.requestSummary
     if (task.status === 'running') this.activeTurns.set(task.threadId, task.id)
     else if (this.activeTurns.get(task.threadId) === task.id) this.activeTurns.delete(task.threadId)
+    this.tasks.delete(`${task.threadId}:`)
     this.tasks.set(task.id, task)
     this.changed = true
     if (task.status !== 'running' && !this.muted.has(task.threadId)) this.notifications.push(task)
@@ -528,6 +529,20 @@ export class TaskMonitor {
 
   get(id: string): TaskRecord | undefined {
     return this.tasks.get(id)
+  }
+
+  async addSession(task: TaskRecord): Promise<void> {
+    if (!this.canPersist) throw new Error('任务记录无法保存，请先处理本机任务监视的错误。')
+    if (
+      !ID.test(task.threadId) ||
+      task.turnId !== '' ||
+      task.status !== 'idle' ||
+      task.id !== `${task.threadId}:`
+    )
+      throw new Error('新会话记录无效。')
+    this.tasks.set(task.id, task)
+    this.publish()
+    await this.writes
   }
 
   async setMuted(id: string, muted: boolean): Promise<void> {

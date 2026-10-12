@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Node tests are JavaScript. */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 import ts from 'typescript'
 
@@ -8,7 +10,7 @@ const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toStr
 const transportUrl = url(`
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-export const state = { writes: [], child: undefined };
+export const state = { writes: [], child: undefined, failResumePaths: [], failStart: false };
 export function spawn(executable, args, options) {
   const child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
@@ -17,7 +19,10 @@ export function spawn(executable, args, options) {
   child.stdin.on('data', chunk => {
     const message = JSON.parse(chunk.toString()); state.writes.push(message);
     if (message.id === undefined || !message.method) return;
+    if (message.method === 'thread/resume' && state.failResumePaths.includes(executable)) { child.send({id:message.id,error:{code:-32601,message:'paginated_threads is not supported yet'}}); return; }
+    if (message.method === 'turn/start' && state.failStart) { child.send({id:message.id,error:{code:-32600,message:'cannot start'}}); return; }
     let result = {};
+    if (message.method === 'initialize') result = {userAgent:'fake-codex/1.0'};
     if (message.method === 'thread/resume') result = { thread: { id: message.params.threadId, cwd: options.cwd, status: { type:'idle' } } };
     if (message.method === 'turn/start') result = { turn: { id:'turn-'+state.writes.length } };
     child.send({ id:message.id, result });
@@ -32,7 +37,7 @@ const { outputText } = ts.transpileModule(
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
   }
 )
-const { CodexSession } = await import(
+const { CodexSession, discoverCodexExecutables } = await import(
   url(outputText.replace("'node:child_process'", JSON.stringify(transportUrl)))
 )
 const task = { threadId: 'test-thread', cwd: process.cwd(), status: 'completed' }
@@ -162,3 +167,106 @@ test('secret questions and unsupported permission requests are never auto-approv
   })
   session.stop()
 })
+
+test('workspace permission exposes complete in-project file diffs but rejects outside paths and missing previews', async () => {
+  const output = []
+  const session = new CodexSession(process.execPath, () => {}, { permission: 'workspace-write' })
+  await session.start(task, 'edit', async (item) => {
+    output.push(item)
+  })
+  const started = state.writes.filter((item) => item.method === 'turn/start').at(-1)
+  assert.deepEqual(started.params.sandboxPolicy.writableRoots, [task.cwd])
+  assert.equal(started.params.sandboxPolicy.networkAccess, false)
+  const change = (id, path) =>
+    state.child.send({
+      method: 'item/started',
+      params: {
+        threadId: task.threadId,
+        item: { id, type: 'fileChange', changes: [{ path, kind: { type: 'add' }, diff: '+hello' }] }
+      }
+    })
+  change('file-inside', join(task.cwd, 'new-file.txt'))
+  request('file-review', 'item/fileChange/requestApproval', { itemId: 'file-inside' })
+  await flush()
+  const approval = output.find((item) => item.text.includes('+hello'))
+  assert.ok(approval)
+  assert.equal(
+    state.writes.some((item) => item.id === 'file-review'),
+    false
+  )
+  session.approve(approval.choices[0].action.requestId, 'accept')
+  assert.deepEqual(state.writes.find((item) => item.id === 'file-review').result, {
+    decision: 'accept'
+  })
+  change('file-outside', join(task.cwd, '..', 'outside.txt'))
+  request('outside-review', 'item/fileChange/requestApproval', { itemId: 'file-outside' })
+  assert.deepEqual(state.writes.find((item) => item.id === 'outside-review').result, {
+    decision: 'decline'
+  })
+  request('missing-review', 'item/fileChange/requestApproval', { itemId: 'not-seen' })
+  assert.deepEqual(state.writes.find((item) => item.id === 'missing-review').result, {
+    decision: 'decline'
+  })
+  session.stop()
+})
+
+test(
+  'auto-discovery follows desktop updates and fallback stops before submitting a turn',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-runtime-'))
+    const previous = process.env.LOCALAPPDATA
+    const binary = (version, time) => {
+      const directory = join(root, 'OpenAI', 'Codex', 'bin', version)
+      mkdirSync(directory, { recursive: true })
+      const file = join(directory, 'codex.exe')
+      writeFileSync(file, 'fixture; not executed')
+      utimesSync(file, time, time)
+      return file
+    }
+    const old = binary('old', new Date('2025-01-01'))
+    try {
+      process.env.LOCALAPPDATA = root
+      assert.equal(discoverCodexExecutables()[0], old)
+      const updated = binary('updated', new Date('2026-01-01'))
+      assert.equal(discoverCodexExecutables()[0], updated)
+      assert.deepEqual(discoverCodexExecutables(old), [old], 'manual override stays pinned')
+      state.failResumePaths = [updated]
+      const runtimes = []
+      const session = new CodexSession('', () => {}, { onRuntime: (info) => runtimes.push(info) })
+      const before = state.writes.filter((item) => item.method === 'turn/start').length
+      await session.start(task, 'once', async () => {})
+      assert.equal(runtimes[0].executable, old)
+      assert.equal(state.writes.filter((item) => item.method === 'turn/start').length, before + 1)
+      session.stop()
+      state.failResumePaths = []
+      state.failStart = true
+      const initializations = state.writes.filter((item) => item.method === 'initialize').length
+      await assert.rejects(
+        session.start(task, 'must not retry', async () => {}),
+        /请求被拒绝/
+      )
+      assert.equal(
+        state.writes.filter((item) => item.method === 'initialize').length,
+        initializations + 1
+      )
+      state.failStart = false
+      const read = state.writes.filter((item) => item.method === 'thread/resume').length
+      const info = await session.check()
+      assert.equal(info.executable, updated)
+      assert.equal(info.version, 'fake-codex/1.0')
+      assert.equal(
+        state.writes.filter((item) => item.method === 'thread/resume').length,
+        read,
+        'protocol check does not resume or run a conversation'
+      )
+    } finally {
+      if (previous === undefined) delete process.env.LOCALAPPDATA
+      else process.env.LOCALAPPDATA = previous
+      state.failResumePaths = []
+      state.failStart = false
+      if (resolve(root).startsWith(resolve(tmpdir()) + sep))
+        rmSync(root, { recursive: true, force: true })
+    }
+  }
+)

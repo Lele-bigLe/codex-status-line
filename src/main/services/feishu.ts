@@ -6,7 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 import {
   DEFAULT_FEISHU_SETTINGS,
   DEFAULT_FEISHU_STATUS,
+  normalizeExecutionThreads,
   type FeishuSettings,
+  type ExecutionThread,
   type FeishuStatus
 } from '../../shared/feishu'
 
@@ -17,7 +19,7 @@ class FeishuRequestError extends Error {
 }
 
 function validateSettings(value: unknown): FeishuSettings {
-  const input = value as Partial<FeishuSettings> | null
+  const input = value as (Partial<FeishuSettings> & { executionThreadId?: unknown }) | null
   if (
     !input ||
     typeof input.enabled !== 'boolean' ||
@@ -39,13 +41,12 @@ function validateSettings(value: unknown): FeishuSettings {
     allowedChatId: typeof input.allowedChatId === 'string' ? input.allowedChatId.trim() : '',
     allowedUserId: typeof input.allowedUserId === 'string' ? input.allowedUserId.trim() : '',
     executionEnabled: input.executionEnabled === true,
-    executionThreadId: typeof input.executionThreadId === 'string' ? input.executionThreadId.trim() : '',
+    executionThreads: normalizeExecutionThreads(input.executionThreads, input.executionThreadId),
     codexExecutable: typeof input.codexExecutable === 'string' ? input.codexExecutable.trim() : ''
   }
   if (settings.codexExecutable.length > 1024 || /[\r\n\0]/.test(settings.codexExecutable) ||
-    settings.executionThreadId.length > 128 || (settings.executionEnabled &&
-      (!settings.receiveEnabled || !/^[a-fA-F0-9-]{36}$/.test(settings.executionThreadId)))) {
-    throw new Error('启用 Codex 执行前请启用消息接收，并填写测试会话 ID。')
+    (settings.executionEnabled && !settings.receiveEnabled)) {
+    throw new Error('请检查 Codex 程序路径，并在启用执行前开启消息接收。')
   }
   if ([settings.appId, settings.appSecret, settings.allowedChatId, settings.allowedUserId]
     .some(value => value.length > 256 || /[\r\n]/.test(value))) {
@@ -111,7 +112,25 @@ export class FeishuNotifier {
 
   async save(value: unknown): Promise<FeishuSettings> {
     const settings = validateSettings(value)
+    return this.persist(() => settings)
+  }
+
+  async authorizeSession(grant: ExecutionThread, expected: FeishuSettings, active: () => boolean): Promise<void> {
+    await this.persist(() => {
+      const current = this.settings
+      if (!active() || !current.executionEnabled || !current.receiveEnabled ||
+        current.appId !== expected.appId || current.appSecret !== expected.appSecret ||
+        current.allowedChatId !== expected.allowedChatId || current.allowedUserId !== expected.allowedUserId)
+        throw new Error('消息接收配置已变化，请重新打开会话权限卡片。')
+      return validateSettings({ ...current, executionThreads: [
+        ...current.executionThreads.filter((item) => item.threadId !== grant.threadId), grant
+      ] })
+    })
+  }
+
+  private async persist(getSettings: () => FeishuSettings): Promise<FeishuSettings> {
     const write = this.writes.then(async () => {
+      const settings = getSettings()
       requireEncryption()
       try {
         const encrypted = safeStorage.encryptString(JSON.stringify(settings))

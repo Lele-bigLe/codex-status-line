@@ -1075,6 +1075,12 @@ body {
 }
 
 .receiver-settings h3 { font-size: 14px; }
+.session-grant { padding: 12px; border: 1px solid var(--panel-line); border-radius: 8px; display: grid; gap: 8px; font-size: 13px; }
+.session-grant small { white-space: pre-line; overflow-wrap: anywhere; color: var(--panel-muted); }
+.session-grant__actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-grant__actions > :first-child { flex: 1; min-width: 0; }
+.receiver-settings select { min-width: 0; width: 100%; min-height: 36px; border: 1px solid var(--panel-line); border-radius: 6px; padding: 6px; color: var(--panel-text); background: var(--panel-inset); }
+.receiver-settings select:focus-visible { outline: 2px solid var(--panel-accent); outline-offset: 1px; }
 .receiver-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .receiver-toggle input { accent-color: var(--panel-accent); }
 .receiver-status {
