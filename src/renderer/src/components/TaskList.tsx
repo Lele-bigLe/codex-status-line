@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { LocaleCode } from '../../../shared/capsule'
 import type { TaskRecord, TasksSnapshot } from '../../../shared/tasks'
 
-const STATES = ['running', 'completed', 'interrupted', 'unknown'] as const
+const STATES = ['running', 'waiting_input', 'completed', 'interrupted', 'unknown'] as const
 
 export function TaskList({
   snapshot,
@@ -25,11 +25,11 @@ export function TaskList({
 }): React.JSX.Element {
   const en = locale === 'en-US'
   const labels = en
-    ? { running: 'Running', completed: 'Ended', interrupted: 'Interrupted', unknown: 'Unknown' }
-    : { running: '进行中', completed: '本轮结束', interrupted: '已中断', unknown: '状态未知' }
+    ? { running: 'Running', waiting_input: 'Needs input', completed: 'Ended', interrupted: 'Interrupted', unknown: 'Unknown' }
+    : { running: '进行中', waiting_input: '待回答', completed: '本轮结束', interrupted: '已中断', unknown: '状态未知' }
   const unknownHint = en
-    ? 'No new task status has been received since monitoring was interrupted. No confirmation is needed.'
-    : '监视中断后，尚未收到新的任务状态，无需手动确认。'
+    ? 'The available logs do not confirm the current state. New activity will update it automatically.'
+    : '可用日志尚不足以确认当前状态；新的活动会自动更新。'
   const [expanded, setExpanded] = useState<string>()
   const [filter, setFilter] = useState<TaskRecord['status']>()
   const visibleTasks = snapshot.tasks.filter((task) => !filter || task.status === filter)
@@ -59,11 +59,11 @@ export function TaskList({
   }
   function elapsed(task: TaskRecord): string {
     const duration =
-      task.status === 'running' && task.startedAt
+      (task.status === 'running' || task.status === 'waiting_input') && !task.endedAt && task.startedAt
         ? now - Date.parse(task.startedAt)
         : (task.durationMs ??
           (task.startedAt && task.status !== 'unknown'
-            ? Date.parse(task.updatedAt) - Date.parse(task.startedAt)
+            ? Date.parse(task.endedAt ?? task.updatedAt) - Date.parse(task.startedAt)
             : undefined))
     if (duration === undefined || !Number.isFinite(duration) || duration < 0) return '—'
     const seconds = Math.floor(duration / 1000),
@@ -220,12 +220,14 @@ export function TaskList({
                         ? '×'
                         : task.status === 'running'
                           ? '·'
-                          : '?'}
+                          : task.status === 'waiting_input'
+                            ? '!'
+                            : '?'}
                   </span>
                   <strong title={title}>{title}</strong>
                   <span
                     className="monitor-status"
-                    title={task.status === 'unknown' ? unknownHint : undefined}
+                    title={task.status === 'unknown' ? unknownHint : task.pendingQuestions?.map((q) => q.text).join('\n')}
                   >
                     {labels[task.status]}
                   </span>
@@ -267,6 +269,7 @@ export function TaskList({
                 {expanded === task.threadId ? (
                   <div className="monitor-task-details">
                     {task.status === 'unknown' ? <p>{unknownHint}</p> : null}
+                    {task.pendingQuestions?.map((question, index) => <p key={`${question.callId}:${index}`}>{question.text}</p>)}
                     {task.requestSummary ? <p>{task.requestSummary}</p> : null}
                     <p>{task.cwd}</p>
                     <p>

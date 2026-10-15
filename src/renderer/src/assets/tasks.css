@@ -12,6 +12,7 @@
   --glass-line: rgba(103, 124, 137, 0.12);
   --glass-highlight: rgba(255, 255, 255, 0.65);
   --monitor-blue: #407f9c;
+  --monitor-amber: #9b7138;
   --monitor-green: #4b8066;
   --monitor-red: #b56369;
   --monitor-gray: #7c8791;
@@ -28,6 +29,7 @@
   --glass-line: rgba(191, 213, 236, 0.1);
   --glass-highlight: rgba(214, 229, 247, 0.13);
   --monitor-blue: #8fbcd3;
+  --monitor-amber: #dfb97c;
   --monitor-green: #99cbb0;
   --monitor-red: #e5a0a5;
   --monitor-gray: #a1adbb;
@@ -167,6 +169,9 @@
 [data-status='running'] {
   --state: var(--monitor-blue);
 }
+[data-status='waiting_input'] {
+  --state: var(--monitor-amber);
+}
 [data-status='completed'] {
   --state: var(--monitor-green);
 }
@@ -178,6 +183,7 @@
 }
 .monitor-summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 3px;

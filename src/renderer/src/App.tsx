@@ -711,8 +711,10 @@ function App(): React.JSX.Element {
 
   if (windowRole === 'tasks') {
     const runningCount = tasks.tasks.filter(task => task.status === 'running').length
-    const current = tasks.tasks.find(task => task.status === 'running') ?? tasks.tasks[0]
+    const waitingCount = tasks.tasks.filter(task => task.status === 'waiting_input').length
+    const current = tasks.tasks.find(task => task.status === 'waiting_input') ?? tasks.tasks.find(task => task.status === 'running') ?? tasks.tasks[0]
     const taskLabel = !tasks.monitoring ? (settings.locale === 'en-US' ? 'Monitoring paused' : '监视已暂停')
+      : waitingCount ? (current?.title || current?.pendingQuestions?.[0]?.text || (settings.locale === 'en-US' ? 'Awaiting your answer' : '等待你回答'))
       : runningCount ? (current?.title || current?.requestSummary || (settings.locale === 'en-US' ? 'Task running' : '任务执行中'))
       : !current ? (settings.locale === 'en-US' ? 'Waiting for tasks' : '等待新任务')
       : current.status === 'completed' ? (settings.locale === 'en-US' ? 'Turn ended' : '本轮已结束')
@@ -722,9 +724,9 @@ function App(): React.JSX.Element {
       <div className="app-shell app-shell--tasks" data-theme={settings.theme} data-native-glass={Boolean(taskWindow.nativeGlass)}>
         {!taskWindow.expanded ? <div className="monitor-peek" data-status={current?.status ?? 'unknown'}>
           <span className="monitor-peek-drag" title={settings.locale === 'en-US' ? 'Drag to move' : '拖动移动'} aria-hidden="true"><svg viewBox="0 0 10 14" fill="currentColor"><circle cx="3" cy="3" r="1"/><circle cx="7" cy="3" r="1"/><circle cx="3" cy="7" r="1"/><circle cx="7" cy="7" r="1"/><circle cx="3" cy="11" r="1"/><circle cx="7" cy="11" r="1"/></svg></span>
-          <button className="monitor-peek-summary" type="button" title={runningCount && tasks.monitoring ? `${settings.locale === 'en-US' ? `${runningCount} running` : `${runningCount} 个任务进行中`} · ${taskLabel}` : current?.title || taskLabel} onClick={() => {
+          <button className="monitor-peek-summary" type="button" title={waitingCount && tasks.monitoring ? `${settings.locale === 'en-US' ? `${waitingCount} awaiting input` : `${waitingCount} 个会话待回答`} · ${current?.pendingQuestions?.map(q => q.text).join('\n') || taskLabel}` : runningCount && tasks.monitoring ? `${settings.locale === 'en-US' ? `${runningCount} running` : `${runningCount} 个任务进行中`} · ${taskLabel}` : current?.title || taskLabel} onClick={() => {
             void window.codexStatus.setTaskWindowPinned(true).catch(recordSnapshotIssue)
-          }}><i aria-hidden="true"/><strong>{runningCount && tasks.monitoring ? (settings.locale === 'en-US' ? 'Running' : '进行中') : 'Codex'}</strong><span>{taskLabel}</span></button>
+          }}><i aria-hidden="true"/><strong>{waitingCount && tasks.monitoring ? (settings.locale === 'en-US' ? 'Needs input' : '待回答') : runningCount && tasks.monitoring ? (settings.locale === 'en-US' ? 'Running' : '进行中') : 'Codex'}</strong><span>{taskLabel}</span></button>
           <button className="monitor-peek-close" type="button" onClick={closePanel} aria-label={copy.close} title={copy.close}><CloseIcon /></button>
         </div> : null}
         <section className="panel panel--tasks monitor-popup" hidden={!taskWindow.expanded}>
@@ -921,21 +923,21 @@ function App(): React.JSX.Element {
                   <p className="settings-section__title">{settings.locale === 'en-US' ? 'Tasks & notifications' : '任务与通知'}</p>
                   {([
                     ['taskMonitoring', settings.locale === 'en-US' ? 'Monitor local tasks' : '本机任务监视'],
-                    ['taskNotifications', settings.locale === 'en-US' ? 'Desktop notifications' : '桌面完成通知'],
+                    ['taskNotifications', settings.locale === 'en-US' ? 'Desktop notifications' : '桌面状态通知'],
                     ['taskNotificationSound', settings.locale === 'en-US' ? 'Desktop notification sound' : '桌面通知声音']
                   ] as const).map(([key, label]) => <div className="setting-row" key={key}>
                     <span>{label}</span>
                     <ToggleSwitch checked={settings[key]} label={label} offLabel={copy.disabled} onLabel={copy.enabled}
                       onChange={(checked) => { void handleSettingsPatch({ [key]: checked }) }} />
                   </div>)}
-                  <p className="task-help">{settings.locale === 'en-US' ? 'Desktop notifications require OS permission and show the title and request summary. Desktop and Feishu notifications have separate switches. Muted or removed sessions do not notify; historical results are not replayed.' : '桌面通知需系统允许，会显示标题和本轮需求摘要。桌面与飞书通知分别开关；静音或移除的会话不提醒，重启监视不补发历史通知。'}</p>
+                  <p className="task-help">{settings.locale === 'en-US' ? 'Notify when Codex asks a question or a turn ends. Desktop notifications require OS permission. Desktop and Feishu switches are independent; muted or removed sessions and historical events do not notify.' : 'Codex 提问或轮次结束时提醒，通知包含问题或本轮需求摘要。桌面通知需系统允许，桌面与飞书分别开关；静音或移除的会话不提醒，重启监视不补发历史通知。'}</p>
                 </div>
                 <div className="settings-section">
                   <p className="settings-section__title">{settings.locale === 'en-US' ? 'Feishu mobile notifications' : '飞书手机通知'}</p>
                   <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
                     aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Feishu settings' : '飞书配置'}>
                     <div className="setting-row">
-                      <span>{settings.locale === 'en-US' ? 'Notify when turns end' : '轮次结束时推送'}</span>
+                      <span>{settings.locale === 'en-US' ? 'Notify on questions and turn end' : '提问及轮次结束时推送'}</span>
                       <ToggleSwitch checked={feishuSettings.enabled}
                         label={settings.locale === 'en-US' ? 'Feishu notifications' : '飞书通知'}
                         offLabel={copy.disabled} onLabel={copy.enabled}
@@ -984,8 +986,8 @@ function App(): React.JSX.Element {
                     </div>
                   </fieldset>
                   <p className="task-help">{settings.locale === 'en-US'
-                    ? 'Credentials are encrypted on this computer. Enabling sends titles and request summaries to your Feishu group. Keep Codex Status running and task monitoring on; the desktop Feishu app need not be signed in.'
-                    : '地址与密钥加密保存在本机；开启后会将标题和需求摘要发送到指定飞书群。需保持本应用运行并开启任务监视，电脑飞书无需登录。'}</p>
+                    ? 'Credentials are encrypted on this computer. Enabling sends titles, questions and request summaries to your Feishu group. Keep Codex Status running and task monitoring on; the desktop Feishu app need not be signed in.'
+                    : '地址与密钥加密保存在本机；开启后会将标题、待回答的问题及需求摘要发送到指定飞书群。需保持本应用运行并开启任务监视，电脑飞书无需登录。'}</p>
                   {feishuStatus.enabled && !settings.taskMonitoring ? <p className="settings-error" role="status">
                     {settings.locale === 'en-US' ? 'Task monitoring is paused; automatic notifications are paused too.' : '任务监视已关闭，自动推送也已暂停。'}
                   </p> : null}

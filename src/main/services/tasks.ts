@@ -14,6 +14,8 @@ interface Cursor {
   pending: Buffer
   skipping: boolean
   metadata?: SessionMetadata
+  recoveringUntil?: number
+  recoveredTurns?: Set<string>
 }
 const MAX_LINE = 1024 * 1024
 const ID = /^[a-zA-Z0-9_-]{1,100}$/
@@ -101,11 +103,14 @@ export function taskFromEvent(value: unknown, metadata: SessionMetadata): TaskRe
           : undefined
   if (!status) return
   const startedAt =
-    typeof payload.started_at === 'string' && Number.isFinite(Date.parse(payload.started_at))
-      ? new Date(payload.started_at).toISOString()
-      : status === 'running'
-        ? new Date(item.timestamp).toISOString()
-        : undefined
+    typeof payload.started_at === 'number' && payload.started_at > 0 &&
+    Number.isFinite(new Date(payload.started_at * 1000).getTime())
+      ? new Date(payload.started_at * 1000).toISOString()
+      : typeof payload.started_at === 'string' && Number.isFinite(Date.parse(payload.started_at))
+        ? new Date(payload.started_at).toISOString()
+        : status === 'running'
+          ? new Date(item.timestamp).toISOString()
+          : undefined
   return {
     ...metadata,
     id: `${metadata.threadId}:${payload.turn_id}`,
@@ -141,11 +146,12 @@ export class TaskMonitor {
   private muted = new Set<string>()
   private removed = new Map<string, string>()
   private activeTurns = new Map<string, string>()
+  private questionCalls = new Set<string>()
 
   constructor(
     private root: string,
     private stateFile: string,
-    private onChanged: (snapshot: TasksSnapshot, completed: TaskRecord[]) => void
+    private onChanged: (snapshot: TasksSnapshot, notifications: TaskRecord[]) => void
   ) {}
 
   snapshot(): TasksSnapshot {
@@ -200,7 +206,7 @@ export class TaskMonitor {
           t.cwd.length > 4096 ||
           typeof t.updatedAt !== 'string' ||
           !Number.isFinite(Date.parse(t.updatedAt)) ||
-          !['running', 'completed', 'interrupted', 'unknown'].includes(String(t.status)) ||
+          !['running', 'waiting_input', 'completed', 'interrupted', 'unknown'].includes(String(t.status)) ||
           !['vscode', 'cli', 'unknown'].includes(String(t.client))
         )
           continue
@@ -211,6 +217,15 @@ export class TaskMonitor {
           title: typeof task.title === 'string' ? task.title.slice(0, 160) : undefined,
           requestSummary:
             typeof task.requestSummary === 'string' ? task.requestSummary.slice(0, 220) : undefined,
+          pendingQuestions: Array.isArray(task.pendingQuestions)
+            ? task.pendingQuestions.filter((question) =>
+              question && typeof question.callId === 'string' && question.callId.length <= 200 &&
+              typeof question.text === 'string' && question.text.length <= 220 &&
+              typeof question.asynchronous === 'boolean'
+            ).slice(0, 20)
+            : undefined,
+          endedAt: typeof task.endedAt === 'string' && Number.isFinite(Date.parse(task.endedAt))
+            ? task.endedAt : undefined,
           startedAt:
             typeof task.startedAt === 'string' && Number.isFinite(Date.parse(task.startedAt))
               ? task.startedAt
@@ -244,13 +259,15 @@ export class TaskMonitor {
     this.cursors.clear()
     this.dirty.clear()
     this.activeTurns.clear()
+    this.questionCalls.clear()
     for (const task of this.tasks.values()) {
-      if (task.status === 'running') task.status = 'unknown'
+      if (task.status === 'running' || task.status === 'waiting_input') task.status = 'unknown'
     }
     this.active = enabled
     if (enabled) {
-      // 首次启动/重新启用只建立读取位置，不把历史会话批量通知给用户。
+      // 回读已监视会话以恢复状态；历史事件不补发通知。
       await this.scan(true)
+      await this.poll()
       this.timer = setInterval(() => {
         void this.poll()
       }, 1500)
@@ -271,13 +288,19 @@ export class TaskMonitor {
         const stat = await fs.stat(file).catch(() => undefined)
         if (!stat) continue
         if (baseline) {
+          const recover = [...this.tasks.values()].some((task) =>
+            entry.name.endsWith(`-${task.threadId}.jsonl`)
+          )
           this.cursors.set(file, {
-            offset: stat.size,
+            offset: recover ? Math.max(0, stat.size - 8 * MAX_LINE) : stat.size,
             ino: stat.ino,
             pending: Buffer.alloc(0),
             skipping: false,
-            baseline: true
+            baseline: true,
+            recoveringUntil: recover ? stat.size : undefined,
+            recoveredTurns: recover ? new Set() : undefined
           })
+          if (recover) this.dirty.add(file)
         } else {
           const cursor = this.cursors.get(file)
           if (!cursor || cursor.offset !== stat.size || cursor.ino !== stat.ino)
@@ -455,6 +478,14 @@ export class TaskMonitor {
         cursor.skipping = false
         return
       }
+      if (!this.activeTurns.has(cursor.metadata.threadId)) {
+        const threadId = cursor.metadata.threadId
+        const latest = [...this.tasks.values()]
+          .filter((task) => task.threadId === threadId)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+        if (latest && (latest.status === 'unknown' || latest.status === 'waiting_input'))
+          this.activeTurns.set(threadId, latest.id)
+      }
       // 每次最多处理 8 MiB，其余留到下一轮；大工具输出不保留在内存中。
       const end = Math.min(stat.size, cursor.offset + 8 * MAX_LINE)
       while (cursor.offset < end) {
@@ -469,7 +500,10 @@ export class TaskMonitor {
             try {
               this.consume(
                 JSON.parse(data.subarray(start, newline).toString('utf8')),
-                cursor.metadata
+                cursor.metadata,
+                cursor.recoveringUntil === undefined ||
+                  cursor.offset - data.length + newline + 1 > cursor.recoveringUntil,
+                cursor.recoveredTurns
               )
             } catch {
               /* 跳过无效日志行。 */
@@ -488,43 +522,144 @@ export class TaskMonitor {
         this.dirty.add(file)
         this.schedulePoll()
       }
+      if (cursor.recoveringUntil !== undefined && cursor.offset >= cursor.recoveringUntil) {
+        cursor.recoveringUntil = undefined
+        cursor.recoveredTurns = undefined
+      }
     } finally {
       await handle.close()
     }
   }
 
-  private consume(value: unknown, metadata: SessionMetadata): void {
+  private consume(value: unknown, metadata: SessionMetadata, notify = true, recoveredTurns?: Set<string>): void {
     if (this.removed.has(metadata.threadId)) return
+    const item = record(value), payload = record(item?.payload)
+    if (!payload || typeof item?.timestamp !== 'string' || !Number.isFinite(Date.parse(item.timestamp)))
+      return
+    const updatedAt = new Date(item.timestamp).toISOString()
     const task = taskFromEvent(value, metadata)
     if (!task) {
       const activeId = this.activeTurns.get(metadata.threadId)
       const active = activeId ? this.tasks.get(activeId) : undefined
-      if (!active) return
+      if (!active || updatedAt < active.updatedAt) return
+      const source = record(record(record(item.metadata)?.retained_source)?.id)
+      const turnId = payload.turn_id ?? source?.turn_id
+      if (typeof turnId === 'string' && turnId !== active.turnId) return
+      if (item.type !== 'response_item' && item.type !== 'event_msg') return
       const summary = turnRequestSummary(value)
       if (summary && summary !== active.requestSummary) {
         active.requestSummary = summary
         this.changed = true
       }
+      const activity = item.type === 'response_item'
+        ? ['function_call', 'custom_tool_call', 'function_call_output', 'custom_tool_call_output', 'reasoning'].includes(String(payload.type)) ||
+          (payload.type === 'message' && (payload.role === 'assistant' || Boolean(summary)))
+        : ['agent_message', 'agent_reasoning', 'token_count', 'item_started', 'item_completed',
+            'exec_command_begin', 'exec_command_end', 'mcp_tool_call_begin', 'mcp_tool_call_end'].includes(String(payload.type))
+      let questions = active.pendingQuestions || []
+      const name = typeof payload.name === 'string' ? payload.name.split('.').at(-1) : undefined
+      const asking = (payload.type === 'function_call' || payload.type === 'custom_tool_call') &&
+        (name === 'request_user_input' || name === 'request_user_input_async')
+      let newQuestion = false
+      let answeredQuestion = false
+      const callKey = `${active.id}:${payload.call_id}`
+      if (asking && typeof payload.call_id === 'string' && payload.call_id.length <= 200 &&
+        !this.questionCalls.has(callKey)) {
+        try {
+          const args = record(JSON.parse(String(payload.arguments ?? payload.input)))
+          if (Array.isArray(args?.questions) && !questions.some((q) => q.callId === payload.call_id)) {
+            const added = args.questions.map(record).flatMap((q) => {
+              const text = typeof q?.question === 'string' ? q.question : q?.title
+              return typeof text === 'string' && text.trim()
+                ? [{ callId: payload.call_id as string, text: text.replace(/\s+/g, ' ').trim().slice(0, 220),
+                    asynchronous: name === 'request_user_input_async' }]
+                : []
+            })
+            if (added.length) {
+              questions = [...questions, ...added].slice(-20)
+              newQuestion = true
+              this.questionCalls.add(callKey)
+            }
+          }
+        } catch {
+          /* 尚未形成有效问题的工具调用不推测为等待回答。 */
+        }
+      }
+      if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
+        let accepted = false
+        try { accepted = record(JSON.parse(String(payload.output)))?.accepted === true } catch { /* 非 JSON 输出。 */ }
+        questions = questions.filter((q) =>
+          q.callId !== payload.call_id || (q.asynchronous && accepted)
+        )
+      }
+      if (payload.type === 'message' && payload.role === 'user' && Array.isArray(payload.content)) {
+        for (const part of payload.content.map(record)) {
+          if (typeof part?.text !== 'string') continue
+          const reply = part.text.trim().match(/^<send_user_message_question_reply>([\s\S]*)<\/send_user_message_question_reply>$/)
+          if (!reply) continue
+          try {
+            const answers: unknown = JSON.parse(reply[1])
+            if (Array.isArray(answers)) {
+              const answered = answers.map(record).flatMap((answer) =>
+                typeof answer?.question === 'string' && typeof answer.answer === 'string'
+                  ? [answer.question.replace(/\s+/g, ' ').trim().slice(0, 220)] : []
+              )
+              answeredQuestion = answered.length > 0
+              questions = questions.filter((q) => !answered.includes(q.text))
+            }
+          } catch { /* 不把无法识别的回复当成已回答。 */ }
+        }
+      }
+      const status = questions.length ? 'waiting_input' : active.endedAt ? 'completed'
+        : !notify ? 'unknown' : activity || answeredQuestion ? 'running' : active.status
+      if (active.status !== status || (active.pendingQuestions?.length || 0) !== questions.length || newQuestion) {
+        active.status = status
+        active.pendingQuestions = questions.length ? questions : undefined
+        active.updatedAt = updatedAt
+        this.changed = true
+      }
+      if (newQuestion && notify && !this.muted.has(active.threadId))
+        this.notifications.push({ ...active })
+      if (active.status === 'completed') this.activeTurns.delete(active.threadId)
       return
     }
     const previous = this.tasks.get(task.id)
+    const replayStart = !notify && task.status === 'running' && !recoveredTurns?.has(task.id)
+    if (replayStart) recoveredTurns?.add(task.id)
     // 同一轮的结束事件只接受一次，避免重复日志或重读再次提醒。
     if (
-      previous &&
+      previous && !replayStart &&
       (previous.status === 'completed' ||
         previous.status === 'interrupted' ||
         previous.updatedAt > task.updatedAt ||
-        previous.status === task.status)
+        (previous.status === task.status && task.status !== 'running') ||
+        (task.status === 'running' && previous.status !== 'unknown') ||
+        (previous.endedAt && task.status === 'running'))
     )
       return
     task.startedAt ??= previous?.startedAt
     task.title = previous?.title
     task.requestSummary = previous?.requestSummary
-    if (task.status === 'running') this.activeTurns.set(task.threadId, task.id)
-    else if (this.activeTurns.get(task.threadId) === task.id) this.activeTurns.delete(task.threadId)
+    if (task.status === 'running' && notify && previous?.pendingQuestions?.length) {
+      task.pendingQuestions = previous.pendingQuestions
+      task.status = 'waiting_input'
+    }
+    if (task.status === 'completed') {
+      task.endedAt = task.updatedAt
+      task.pendingQuestions = previous?.pendingQuestions?.filter((q) => q.asynchronous)
+      if (task.pendingQuestions?.length) task.status = 'waiting_input'
+    }
+    if (task.status === 'running' && !notify) task.status = 'unknown'
+    if (task.status === 'running' || task.status === 'waiting_input' || task.status === 'unknown') {
+      const activeId = this.activeTurns.get(task.threadId)
+      const active = activeId ? this.tasks.get(activeId) : undefined
+      if (!active || active.id === task.id || active.updatedAt <= task.updatedAt)
+        this.activeTurns.set(task.threadId, task.id)
+    } else if (this.activeTurns.get(task.threadId) === task.id) this.activeTurns.delete(task.threadId)
     this.tasks.set(task.id, task)
     this.changed = true
-    if (task.status !== 'running' && !this.muted.has(task.threadId)) this.notifications.push(task)
+    if (notify && (task.status === 'completed' || task.status === 'interrupted') &&
+      !this.muted.has(task.threadId)) this.notifications.push(task)
   }
 
   get(id: string): TaskRecord | undefined {
@@ -547,7 +682,7 @@ export class TaskMonitor {
     this.activeTurns.delete(task.threadId)
     for (const round of this.tasks.values())
       if (round.threadId === task.threadId) {
-        if (round.status === 'running') round.status = 'unknown'
+        if (round.status === 'running' || round.status === 'waiting_input') round.status = 'unknown'
       }
     this.publish()
     await this.writes
@@ -575,17 +710,19 @@ export class TaskMonitor {
   }
 
   private publish(): void {
-    // 自动保留最近 200 条非运行记录，无需用户标记或清理。
+    // 保留当前运行/待回答轮次及最近 200 条历史记录。
     const viewed = [...this.tasks.values()]
-      .filter((t) => t.status !== 'running')
+      .filter((t) => this.activeTurns.get(t.threadId) !== t.id || t.status === 'unknown')
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     for (const task of viewed.slice(200)) this.tasks.delete(task.id)
     this.changed = false
-    const completed = this.notifications
-      .splice(0)
-      .filter((task) => !this.muted.has(task.threadId) && !this.removed.has(task.threadId))
+    const notifications = [...new Map(this.notifications.splice(0).map((task) => [task.id, task])).values()]
+      .filter((task) => !this.muted.has(task.threadId) && !this.removed.has(task.threadId) &&
+        (task.status !== 'waiting_input' || (this.activeTurns.get(task.threadId) === task.id &&
+          this.tasks.get(task.id)?.status === 'waiting_input')))
+      .map((task) => task.status === 'waiting_input' ? { ...this.tasks.get(task.id)! } : task)
     const snapshot = this.snapshot()
-    this.onChanged(snapshot, completed)
+    this.onChanged(snapshot, notifications)
     // 无法读取原文件时保留它，不用空历史覆盖可能仍可恢复的数据。
     if (!this.canPersist) return
     const content = JSON.stringify({
