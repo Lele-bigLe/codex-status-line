@@ -1,0 +1,845 @@
+.app-shell.app-shell--glass {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 24px;
+  background: #e6ecf2;
+  --panel-bg: #edf4fb;
+  --panel-text: #142d48;
+  --panel-text-2: #304962;
+  --panel-muted: #3d526f;
+  --panel-accent: #204dae;
+  --panel-accent-soft: rgba(255, 255, 255, 0.38);
+  --panel-line: rgba(255, 255, 255, 0.56);
+  --panel-raised: rgba(255, 255, 255, 0.3);
+  --panel-inset: rgba(255, 255, 255, 0.22);
+  --panel-positive: #136145;
+  --panel-warning: #79500f;
+  --panel-danger: #9d2d43;
+  --panel-warning-bg: rgba(255, 245, 222, 0.92);
+  --panel-scroll: #788fae;
+  --scene-light: rgba(255, 255, 255, 0.8);
+  --scene-shade: rgba(108, 128, 154, 0.12);
+  --glass-fill: rgba(255, 255, 255, 0.34);
+  --glass-shine: rgba(255, 255, 255, 0.65);
+  --glass-rim: rgba(255, 255, 255, 0.95);
+  --glass-rim-low: rgba(255, 255, 255, 0.12);
+  --glass-shadow: rgba(43, 73, 118, 0.13);
+}
+
+.app-shell.app-shell--glass[data-theme='dark'] {
+  background: #1b2737;
+  --panel-bg: #172b46;
+  --panel-text: #f0f6ff;
+  --panel-text-2: #d7e5f6;
+  --panel-muted: #c2d2e9;
+  --panel-accent: #c1d6ff;
+  --panel-accent-soft: rgba(211, 229, 255, 0.15);
+  --panel-line: rgba(206, 229, 255, 0.2);
+  --panel-raised: rgba(159, 193, 234, 0.12);
+  --panel-inset: rgba(168, 201, 239, 0.1);
+  --panel-positive: #a0ebc4;
+  --panel-warning: #ffda9f;
+  --panel-danger: #ffb4c2;
+  --panel-warning-bg: rgba(65, 48, 27, 0.94);
+  --panel-scroll: #819dbd;
+  --scene-light: rgba(158, 181, 211, 0.12);
+  --scene-shade: rgba(5, 12, 22, 0.2);
+  --glass-fill: rgba(16, 34, 58, 0.46);
+  --glass-shine: rgba(207, 232, 255, 0.12);
+  --glass-rim: rgba(222, 240, 255, 0.52);
+  --glass-rim-low: rgba(187, 217, 255, 0.06);
+  --glass-shadow: rgba(5, 14, 29, 0.25);
+}
+
+.glass-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(ellipse at 10% 0%, var(--scene-light), transparent 65%),
+    radial-gradient(ellipse at 90% 85%, var(--scene-shade), transparent 75%);
+  pointer-events: none;
+}
+
+.panel.panel--glass {
+  position: relative;
+  border-radius: 24px;
+  border-color: var(--glass-rim);
+  background: linear-gradient(150deg, var(--glass-shine), transparent 45%);
+  box-shadow: inset 0 1px 1px var(--glass-rim);
+}
+
+.app-shell--glass .glass-surface {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--panel-line);
+  background: transparent;
+  box-shadow:
+    inset 0 1px 1px var(--glass-rim),
+    inset 0 -1px 1px var(--glass-rim-low),
+    0 8px 22px var(--glass-shadow);
+}
+
+.app-shell--glass .glass-surface > :not(.glass-material) {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell--glass .glass-surface::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    145deg,
+    var(--glass-rim),
+    var(--glass-rim-low) 38%,
+    var(--glass-rim-low) 65%,
+    var(--glass-rim)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.glass-material,
+.glass-material__pane {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.glass-material {
+  z-index: 0;
+  overflow: hidden;
+}
+
+.glass-material__filter {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.glass-material__pane {
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  backdrop-filter: blur(18px) saturate(1.35);
+}
+
+.glass-material__pane--refractive {
+  -webkit-backdrop-filter: var(--glass-filter) blur(3px) saturate(1.35);
+  backdrop-filter: var(--glass-filter) blur(3px) saturate(1.35);
+}
+
+.glass-material::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(140deg, var(--glass-shine), transparent 45%, var(--glass-rim-low));
+  border-radius: inherit;
+}
+
+.panel--glass .panel__topbar {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+
+.panel--glass .panel__content {
+  container: panel-content / inline-size;
+  padding: 12px 16px;
+}
+
+.panel--glass .panel__header {
+  margin: 0 0 12px;
+}
+
+.panel--glass .panel__header--details {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.panel--glass .panel__header--details > div {
+  flex: 1 1 200px;
+}
+
+.panel--glass .panel__nav {
+  flex-wrap: wrap;
+  margin-inline: 16px;
+  padding: 3px;
+  border-radius: 18px;
+}
+
+.panel--glass .panel__nav button {
+  flex: 1 1 auto;
+  padding-inline: 12px;
+  border-radius: 12px;
+  min-height: 30px;
+}
+
+.panel--glass .panel__nav .panel__tasks-link {
+  flex: 0 0 auto;
+}
+
+.panel--glass .panel__nav button[aria-pressed='true'] {
+  border-color: var(--glass-rim);
+  background: transparent;
+  color: var(--panel-accent);
+  box-shadow: 0 2px 6px var(--glass-shadow);
+}
+
+.panel--glass .panel__nav button:hover:not([aria-pressed='true']) {
+  background: var(--panel-inset);
+}
+
+.panel--glass .panel__account {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.panel--glass .sync-status {
+  background: var(--glass-fill);
+  border-color: var(--glass-rim-low);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+.panel--glass .quota-heading {
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.panel--glass .quota-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 176px), 1fr));
+  margin-top: 0;
+}
+
+.panel--glass .quota-card {
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.panel--glass .quota-card__head {
+  align-items: center;
+}
+
+.panel--glass .quota-card__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.panel--glass .quota-card__reading {
+  display: inline-flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.panel--glass .quota-card__value {
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.panel--glass .quota-card__timing {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-top: auto;
+  overflow-wrap: anywhere;
+}
+
+.panel--glass .quota-card__progress {
+  height: 4px;
+  background: color-mix(in srgb, var(--panel-muted) 16%, transparent);
+  box-shadow: inset 0 1px 2px var(--glass-shadow);
+}
+
+.panel--glass .quota-card__progress > span {
+  box-shadow: inset 0 1px 0 var(--glass-shine);
+}
+
+.panel--glass .automation-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.panel--glass .automation-section--schedules {
+  margin-top: 0;
+}
+
+.panel--glass .automation-section > .ghost-button {
+  justify-self: start;
+}
+
+.panel--glass .automation-heading {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.panel--glass .automation-heading > strong,
+.panel--glass .automation-heading > h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.panel--glass .automation-intro {
+  display: grid;
+  gap: 4px;
+}
+
+.panel--glass .automation-section > p,
+.panel--glass .automation-intro > p,
+.panel--glass .reset-credit > p,
+.panel--glass .cycle-schedule > p,
+.panel--glass .schedule-form > p {
+  margin: 0;
+}
+
+.panel--glass .reset-credit,
+.panel--glass .cycle-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel--glass .reset-credit {
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.panel--glass .reset-credit__footer {
+  margin-top: 0;
+}
+
+.panel--glass .reset-credit__footer .automation-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.panel--glass .credit-priority {
+  margin-left: 0;
+}
+
+.panel--glass .reset-credit-list,
+.panel--glass .cycle-schedule-list {
+  margin: 0;
+  gap: 12px;
+}
+
+.panel--glass .reset-credit .ghost-button {
+  min-height: 28px;
+  border: 1px solid var(--panel-line);
+  border-radius: 9px;
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+.panel--glass .panel__footer {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 6px 16px;
+  background: var(--glass-fill);
+  border-color: var(--glass-rim-low);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+.panel--glass .sync-caption {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.panel--glass .panel__footer .glass-surface {
+  border-radius: 10px;
+  box-shadow: 0 3px 8px var(--glass-shadow);
+}
+
+.panel--glass .connection-details {
+  margin-top: 24px;
+  border-color: color-mix(in srgb, var(--panel-muted) 20%, transparent);
+}
+
+.panel--glass .connection-details summary {
+  padding-block: 12px;
+}
+
+.panel--glass .quota-empty {
+  background: var(--glass-fill);
+  border-color: var(--panel-muted);
+}
+
+.panel--glass .settings-list {
+  gap: 16px;
+}
+
+.panel--glass .settings-section,
+.panel--glass .schedule-form,
+.panel--glass .cycle-schedule {
+  padding: 16px;
+  border-radius: 16px;
+}
+
+.panel--glass .settings-section__title {
+  margin-bottom: 12px;
+}
+
+.panel--glass .setting-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.panel--glass .setting-field + .setting-field {
+  margin-top: 16px;
+}
+
+.panel--glass .setting-field__label {
+  padding-top: 0;
+}
+
+.panel--glass .setting-stack {
+  gap: 8px;
+}
+
+.panel--glass .setting-row + .setting-row {
+  border-top: 1px solid var(--panel-line);
+}
+
+.panel--glass .setting-stack,
+.panel--glass .segmented {
+  min-width: 0;
+}
+
+.panel--glass .segmented {
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--panel-inset);
+}
+
+.panel--glass .segmented button {
+  min-height: 26px;
+  border-radius: 7px;
+}
+
+.panel--glass .inline-input {
+  min-height: 32px;
+}
+
+.panel--glass .inline-input:not(.inline-input--secret) input {
+  font-size: var(--font-control);
+  font-weight: 500;
+}
+
+.panel--glass .segmented button.is-active {
+  border-color: var(--glass-rim);
+  background: linear-gradient(140deg, var(--glass-shine), transparent), var(--glass-fill);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    0 2px 5px var(--glass-shadow);
+}
+
+.panel--glass .inline-input,
+.panel--glass .schedule-form input,
+.panel--glass .schedule-form select,
+.panel--glass .schedule-picker.rc-picker {
+  border-color: color-mix(in srgb, var(--panel-muted) 28%, transparent);
+  background: var(--panel-inset);
+  box-shadow: inset 0 1px 2px var(--glass-shadow);
+}
+
+.panel--glass .schedule-form .schedule-picker input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.panel--glass .inline-input:focus-within,
+.panel--glass .schedule-picker.rc-picker-focused {
+  border-color: var(--panel-accent);
+}
+
+.panel--glass .schedule-picker.rc-picker-invalid {
+  border-color: var(--panel-danger);
+}
+
+@supports (appearance: base-select) {
+  .panel--glass .schedule-form select,
+  .panel--glass .schedule-form select::picker(select) {
+    appearance: base-select;
+  }
+
+  .panel--glass .schedule-form select {
+    align-items: center;
+    min-height: 32px;
+    font-size: var(--font-control);
+    cursor: pointer;
+  }
+
+  .panel--glass .schedule-form select:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .panel--glass .schedule-form select::picker-icon {
+    color: var(--panel-muted);
+  }
+
+  .panel--glass .schedule-form select:open::picker-icon {
+    rotate: 180deg;
+  }
+
+  .panel--glass .schedule-form select::picker(select) {
+    max-height: min(240px, 50vh);
+    margin-block: 6px;
+    padding: 4px;
+    border: 1px solid var(--panel-line);
+    border-radius: 10px;
+    background: var(--panel-bg);
+    color: var(--panel-text);
+    box-shadow:
+      inset 0 1px 0 var(--glass-rim),
+      0 6px 18px var(--glass-shadow);
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-scroll) transparent;
+  }
+
+  .panel--glass .schedule-form option {
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+    padding: 6px 9px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--panel-text);
+    font-size: var(--font-control);
+    cursor: pointer;
+  }
+
+  .panel--glass .schedule-form option:hover,
+  .panel--glass .schedule-form option:focus {
+    background: var(--panel-inset);
+  }
+
+  .panel--glass .schedule-form option:checked {
+    background: color-mix(in srgb, var(--panel-accent) 12%, var(--panel-bg));
+    color: var(--panel-accent);
+    font-weight: 600;
+  }
+
+  .panel--glass .schedule-form option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--panel-accent);
+  }
+}
+
+.panel--glass .ghost-button {
+  flex-shrink: 0;
+  border: 1px solid var(--panel-line);
+  background: var(--panel-inset);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+.panel--glass .ghost-button--accent {
+  color: var(--panel-accent);
+  background: var(--glass-fill);
+}
+
+.panel--glass .ghost-button:hover:not(:disabled) {
+  border-color: var(--glass-rim);
+  background: var(--panel-raised);
+}
+
+.app-shell--glass[data-theme='dark'] .toggle-switch.is-checked .toggle-switch__thumb {
+  background: var(--panel-bg);
+}
+
+.panel--glass .feishu-actions {
+  flex-wrap: wrap;
+}
+
+.panel--glass .schedule-form {
+  gap: 16px;
+  margin-block: 4px 0;
+}
+
+.panel--glass .schedule-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 168px), 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.panel--glass .schedule-form label {
+  min-width: 0;
+}
+
+.panel--glass .schedule-form label > input,
+.panel--glass .schedule-form label > select {
+  padding-block: 5px;
+  line-height: 20px;
+}
+
+.panel--glass .schedule-form input,
+.panel--glass .schedule-form select,
+.panel--glass .schedule-picker.rc-picker {
+  min-height: 32px;
+  font-size: var(--font-control);
+}
+
+.panel--glass .schedule-form .schedule-picker input {
+  min-height: 30px;
+}
+
+.panel--glass .schedule-start-time {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.panel--glass .schedule-frequency {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 112px), 1fr));
+}
+
+.panel--glass .schedule-actions {
+  margin-top: 4px;
+}
+
+.panel--glass .schedule-weekdays button {
+  min-width: 32px;
+  min-height: 30px;
+}
+
+.panel--glass .schedule-repeat-settings {
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+}
+
+.panel--glass .cycle-schedule-list {
+  margin-top: 4px;
+}
+
+.panel--glass .cycle-schedule {
+  font-size: var(--font-control);
+}
+
+.app-shell--glass .schedule-picker-popup .rc-picker-panel {
+  border-color: var(--glass-rim);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    0 8px 24px var(--glass-shadow);
+}
+
+.app-shell.app-shell--tasks.app-shell--glass {
+  border-radius: 10px;
+}
+
+.app-shell.app-shell--tasks.app-shell--glass[data-expanded='true'] {
+  border-radius: 18px;
+}
+
+.app-shell.app-shell--tasks.app-shell--glass[data-native-glass='true'] {
+  background: var(--glass-base);
+}
+
+.panel.panel--tasks.panel--glass {
+  border-radius: 18px;
+  clip-path: none;
+}
+
+.panel--glass .monitor-header {
+  min-height: 42px;
+  padding-inline: 16px 12px;
+}
+
+.panel--glass .monitor-window-actions .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.panel--glass .monitor-summary {
+  justify-content: flex-start;
+  gap: 4px 8px;
+  margin: 0 14px 12px;
+  padding-inline: 0;
+}
+
+.panel--glass .monitor-stat {
+  flex: 1 1 auto;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.panel--glass .monitor-scroll {
+  padding: 0 14px 6px;
+}
+
+.panel--glass .monitor-list {
+  gap: 10px;
+}
+
+.panel--glass .monitor-task {
+  padding: 12px;
+  border-color: var(--panel-line);
+  border-radius: 12px;
+  background: linear-gradient(140deg, var(--glass-shine), transparent 60%), var(--glass-fill);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    0 3px 10px var(--glass-shadow);
+}
+
+.panel--glass .monitor-task:hover,
+.panel--glass .monitor-task:focus-within {
+  border-color: var(--panel-muted);
+}
+
+.panel--glass .monitor-task-meta {
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+
+.panel--glass .monitor-row-actions {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.panel--glass .monitor-row-actions button {
+  min-height: 24px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.panel--glass .monitor-task-details {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+.panel--glass .monitor-task-details p + p {
+  margin-top: 8px;
+}
+
+.panel--glass .monitor-footer {
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 12px;
+  background: var(--glass-fill);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+.panel--glass .monitor-removed {
+  flex-basis: auto;
+  min-width: 0;
+}
+
+.panel--glass .monitor-removed summary {
+  margin-left: 0;
+  padding-block: 2px;
+}
+
+/* 宽度不足时按阅读顺序分行，保留日期、选项文字的可读空间。 */
+@container panel-content (min-width: 300px) {
+  .panel--glass .schedule-start-time {
+    grid-template-columns: minmax(0, 1fr) 116px;
+  }
+}
+
+@container panel-content (min-width: 360px) {
+  .panel--glass .setting-field {
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .panel--glass .setting-field__label {
+    padding-top: 7px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  /* 提高磨砂层覆盖率；保留背景和光边，避免整个界面退化为平面描边。 */
+  .app-shell.app-shell--glass {
+    --glass-fill: rgba(255, 255, 255, 0.7);
+  }
+
+  .app-shell.app-shell--glass[data-theme='dark'] {
+    --glass-fill: rgba(16, 34, 58, 0.76);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-shell.app-shell--glass,
+  .app-shell.app-shell--glass[data-theme='dark'] {
+    --glass-fill: var(--panel-bg);
+  }
+}
+
+@media (forced-colors: active) {
+  .app-shell.app-shell--glass,
+  .app-shell.app-shell--glass[data-theme='dark'] {
+    background: var(--panel-bg);
+    --glass-fill: var(--panel-bg);
+    --glass-shine: transparent;
+    --glass-rim: var(--panel-line);
+    --glass-rim-low: transparent;
+    --glass-shadow: transparent;
+  }
+
+  .app-shell--glass .glass-backdrop,
+  .app-shell--glass .glass-material,
+  .app-shell--glass .glass-surface::after {
+    display: none;
+  }
+
+  .app-shell--glass .glass-surface {
+    background: var(--panel-bg);
+    border-color: var(--panel-muted);
+  }
+
+  .app-shell.app-shell--tasks.app-shell--glass[data-native-glass='true'] {
+    background: Canvas;
+  }
+}
+
+@media (forced-colors: active) {
+  .app-shell.app-shell--glass,
+  .app-shell.app-shell--glass[data-theme='dark'] {
+    --panel-bg: Canvas;
+    --panel-text: CanvasText;
+    --panel-text-2: CanvasText;
+    --panel-muted: CanvasText;
+    --panel-accent: LinkText;
+    --panel-accent-soft: Canvas;
+    --panel-line: CanvasText;
+    --panel-raised: Canvas;
+    --panel-inset: Canvas;
+    --panel-positive: CanvasText;
+    --panel-warning: CanvasText;
+    --panel-danger: CanvasText;
+    --panel-warning-bg: Canvas;
+    --panel-scroll: ButtonText;
+  }
+}

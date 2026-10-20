@@ -55,6 +55,12 @@ import { TaskMonitor } from './services/tasks'
 import { FeishuNotifier } from './services/feishu'
 import { AutomationService } from './services/automation'
 import {
+  DESKTOP_COMMANDS,
+  DESKTOP_EVENTS,
+  type DesktopEvent,
+  type DesktopEventPayload
+} from '../shared/desktopApi'
+import {
   taskWindowBounds,
   taskNotificationContent,
   taskHoverExpanded,
@@ -69,19 +75,6 @@ function getAutoUpdater(): AppUpdater {
 }
 
 const autoUpdater = getAutoUpdater()
-
-const CHANNELS = {
-  bootstrap: 'codex-status:bootstrap',
-  refresh: 'codex-status:refresh',
-  updateSettings: 'codex-status:update-settings',
-  closePanel: 'codex-status:close-panel',
-  openPanel: 'codex-status:open-panel',
-  moveCapsuleWindow: 'codex-status:move-capsule-window',
-  finishCapsuleWindowDrag: 'codex-status:finish-capsule-window-drag',
-  snapshotUpdated: 'codex-status:snapshot-updated',
-  preferencesUpdated: 'codex-status:preferences-updated',
-  command: 'codex-status:command'
-} as const
 
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
@@ -125,7 +118,7 @@ function updateTasks(snapshot: TasksSnapshot, notifications: TaskRecord[]): void
   const countChanged = taskSnapshot.tasks.length !== snapshot.tasks.length
   taskSnapshot = snapshot
   if (countChanged && taskWindowState.expanded) resizeTaskWindow(true)
-  sendToRenderers('codex-status:tasks-updated', snapshot)
+  sendToRenderers('onTasksUpdated', snapshot)
   refreshTrayMenu()
   if (!notifications.length || isQuitting) return
   if (feishuNotifier.getStatus().enabled) {
@@ -416,7 +409,7 @@ function resizeTaskWindow(expanded: boolean): void {
   taskWindowState.expanded = expanded
   taskWindowState.nativeGlass = nativeGlass
   taskLastInside = undefined
-  tasksWindow.webContents.send('codex-status:task-window-updated', taskWindowState)
+  tasksWindow.webContents.send(DESKTOP_EVENTS.onTaskWindowUpdated, taskWindowState)
 }
 
 function loadRenderer(window: BrowserWindow, role: RendererWindowRole): void {
@@ -447,7 +440,7 @@ if (hasSingleInstanceLock) {
     nativeTheme.themeSource = persistedState.settings.theme
     feishuNotifier = new FeishuNotifier(
       join(app.getPath('userData'), 'codex-status-feishu.bin'),
-      (status) => sendToRenderers('codex-status:feishu-status-updated', status)
+      (status) => sendToRenderers('onFeishuStatusUpdated', status)
     )
     await feishuNotifier.load()
     taskMonitor = new TaskMonitor(
@@ -461,7 +454,7 @@ if (hasSingleInstanceLock) {
     automation = new AutomationService(
       join(app.getPath('userData'), 'codex-status-automation.json'),
       join(app.getPath('userData'), 'codex-cycle-trigger'),
-      (snapshot) => sendToRenderers('codex-status:automation-updated', snapshot),
+      (snapshot) => sendToRenderers('onAutomationUpdated', snapshot),
       () => { if (!isQuitting) void refreshStatus({ forceCredentialCheck: true }) }
     )
     await automation.load()
@@ -528,42 +521,42 @@ function registerIpcHandlers(): void {
       throw new Error('请在详情窗口操作 / Open the details panel for this action')
     }
   }
-  ipcMain.handle('codex-status:get-automation', async (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.getAutomation, async (event) => {
     requirePanel(event)
     await automation.refresh(false)
     return automation.snapshot()
   })
-  ipcMain.handle('codex-status:refresh-automation', async (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.refreshAutomation, async (event) => {
     requirePanel(event)
     await automation.refresh()
     return automation.snapshot()
   })
-  ipcMain.handle('codex-status:consume-reset-credit', async (event, accountKey: unknown) => {
+  ipcMain.handle(DESKTOP_COMMANDS.consumeResetCredit, async (event, accountKey: unknown, creditId: unknown) => {
     requirePanel(event)
-    await automation.consumeReset(accountKey)
+    await automation.consumeReset(accountKey, creditId)
     return automation.snapshot()
   })
-  ipcMain.handle('codex-status:save-schedule', async (event, input: unknown) => {
+  ipcMain.handle(DESKTOP_COMMANDS.saveSchedule, async (event, input: unknown) => {
     requirePanel(event)
     return automation.saveSchedule(input)
   })
-  ipcMain.handle('codex-status:enable-schedule', async (event, id: unknown, enabled: unknown) => {
+  ipcMain.handle(DESKTOP_COMMANDS.setScheduleEnabled, async (event, id: unknown, enabled: unknown) => {
     requirePanel(event)
     return automation.setEnabled(id, enabled)
   })
-  ipcMain.handle('codex-status:delete-schedule', async (event, id: unknown) => {
+  ipcMain.handle(DESKTOP_COMMANDS.deleteSchedule, async (event, id: unknown) => {
     requirePanel(event)
     return automation.remove(id)
   })
-  ipcMain.handle('codex-status:get-feishu-settings', (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.getFeishuSettings, (event) => {
     requirePanel(event)
     return feishuNotifier.getSettings()
   })
-  ipcMain.handle('codex-status:save-feishu-settings', (event, settings: unknown) => {
+  ipcMain.handle(DESKTOP_COMMANDS.saveFeishuSettings, (event, settings: unknown) => {
     requirePanel(event)
     return feishuNotifier.save(settings)
   })
-  ipcMain.handle('codex-status:test-feishu-notification', (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.testFeishuNotification, (event) => {
     requirePanel(event)
     const english = persistedState.settings.locale === 'en-US'
     return feishuNotifier.send(() => ({
@@ -572,27 +565,28 @@ function registerIpcHandlers(): void {
         : '飞书通知已连接，请检查手机是否收到这条消息。'
     }), true)
   })
-  ipcMain.handle('codex-status:mute-task', async (_, id: string, muted: boolean) => {
+  ipcMain.handle(DESKTOP_COMMANDS.setTaskMuted, async (_, id: string, muted: boolean) => {
     if (typeof id === 'string' && typeof muted === 'boolean') await taskMonitor.setMuted(id, muted)
   })
-  ipcMain.handle('codex-status:remove-task', async (_, id: string) => {
+  ipcMain.handle(DESKTOP_COMMANDS.removeTask, async (_, id: string) => {
     if (typeof id === 'string') await taskMonitor.remove(id)
   })
-  ipcMain.handle('codex-status:restore-task', async (_, threadId: string) => {
+  ipcMain.handle(DESKTOP_COMMANDS.restoreTask, async (_, threadId: string) => {
     if (typeof threadId === 'string') await taskMonitor.restore(threadId)
   })
-  ipcMain.handle('codex-status:pin-task-window', (event, pinned: boolean) => {
+  ipcMain.handle(DESKTOP_COMMANDS.setTaskWindowPinned, (event, pinned: boolean) => {
     if (event.sender.id !== tasksWindow?.webContents.id || typeof pinned !== 'boolean') return
     taskWindowState.pinned = pinned
     resizeTaskWindow(pinned || taskWindowState.expanded)
   })
-  ipcMain.handle('codex-status:get-tasks', () => taskSnapshot)
-  ipcMain.handle('codex-status:copy-task-session', (_, id: string) => {
+  ipcMain.handle(DESKTOP_COMMANDS.getTasks, () => taskSnapshot)
+  ipcMain.handle(DESKTOP_COMMANDS.copyTaskSession, (_, id: string) => {
     const task = typeof id === 'string' ? taskMonitor.get(id) : undefined
     if (task) clipboard.writeText(task.threadId)
   })
-  ipcMain.handle(CHANNELS.bootstrap, async (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.bootstrap, async (event) => {
     return {
+      capabilities: { tasks: true, automation: true, feishu: true, launchAtLogin: true },
       feishuStatus: feishuNotifier.getStatus(),
       settings: persistedState.settings,
       window: persistedState.window,
@@ -604,7 +598,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(CHANNELS.refresh, async () => {
+  ipcMain.handle(DESKTOP_COMMANDS.refreshStatus, async () => {
     if (!canRefreshStatus()) {
       return currentSnapshot
     }
@@ -613,7 +607,7 @@ function registerIpcHandlers(): void {
     return currentSnapshot
   })
 
-  ipcMain.handle(CHANNELS.updateSettings, async (_, patch: Partial<AppSettings>) => {
+  ipcMain.handle(DESKTOP_COMMANDS.updateSettings, async (_, patch: Partial<AppSettings>) => {
     const previousSettings = persistedState.settings
     const nextSettings = syncLaunchAtLoginPreference({
       ...persistedState.settings,
@@ -657,21 +651,21 @@ function registerIpcHandlers(): void {
     return createPreferencesPayload()
   })
 
-  ipcMain.handle(CHANNELS.closePanel, async (event) => {
+  ipcMain.handle(DESKTOP_COMMANDS.closePanel, async (event) => {
     if (event.sender.id === tasksWindow?.webContents.id) tasksWindow.hide()
     else panelWindow?.hide()
   })
 
-  ipcMain.handle(CHANNELS.openPanel, async (_, view: PanelView) => {
+  ipcMain.handle(DESKTOP_COMMANDS.openPanel, async (_, view: PanelView) => {
     if (view === 'settings' && tasksWindow?.isVisible()) tasksWindow.hide()
     openPanelWindow(view === 'tasks' || view === 'settings' || view === 'schedules' ? view : 'details')
   })
 
-  ipcMain.handle(CHANNELS.moveCapsuleWindow, async (_, payload: CapsuleDragMovePayload) => {
+  ipcMain.handle(DESKTOP_COMMANDS.moveCapsuleWindow, async (_, payload: CapsuleDragMovePayload) => {
     return moveCapsuleWindow(payload)
   })
 
-  ipcMain.handle(CHANNELS.finishCapsuleWindowDrag, async () => {
+  ipcMain.handle(DESKTOP_COMMANDS.finishCapsuleWindowDrag, async () => {
     return finishCapsuleWindowDrag()
   })
 }
@@ -1137,11 +1131,11 @@ function setWindowBoundsWithoutFocus(window: BrowserWindow, bounds: Rectangle): 
 }
 
 function broadcastSnapshot(): void {
-  sendToRenderers(CHANNELS.snapshotUpdated, currentSnapshot)
+  sendToRenderers('onSnapshotUpdated', currentSnapshot)
 }
 
 function broadcastPreferences(): void {
-  sendToRenderers(CHANNELS.preferencesUpdated, createPreferencesPayload())
+  sendToRenderers('onPreferencesUpdated', createPreferencesPayload())
 }
 
 function createPreferencesPayload(): PreferencesPayload {
@@ -1192,7 +1186,7 @@ function openPanelWindow(view: PanelView): void {
     panelWindow.focus()
   }
 
-  panelWindow.webContents.send(CHANNELS.command, {
+  panelWindow.webContents.send(DESKTOP_EVENTS.onCommand, {
     type: 'show-panel-view',
     panelView: currentPanelView
   } satisfies RendererCommandPayload)
@@ -1431,7 +1425,8 @@ function resolvePanelBounds(x?: number, y?: number): Rectangle {
   }
 }
 
-function sendToRenderers(channel: string, payload: unknown): void {
+function sendToRenderers<K extends DesktopEvent>(event: K, payload: DesktopEventPayload<K>): void {
+  const channel = DESKTOP_EVENTS[event]
   mainWindow?.webContents.send(channel, payload)
   panelWindow?.webContents.send(channel, payload)
   tasksWindow?.webContents.send(channel, payload)

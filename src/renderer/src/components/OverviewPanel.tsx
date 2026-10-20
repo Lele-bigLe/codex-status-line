@@ -16,13 +16,16 @@ import {
 } from '../usagePresentation'
 import { AutomationPanel } from './AutomationPanel'
 import { AlertIcon, ClockIcon, HistoryIcon } from './Icons'
+import { GlassMaterial } from './GlassMaterial'
 
 export function OverviewPanel({
+  automation,
   settings,
   snapshot,
   now,
   onRefresh
 }: {
+  automation: boolean
   settings: AppSettings
   snapshot: UsageSnapshot
   now: number
@@ -116,7 +119,7 @@ export function OverviewPanel({
           </div>
         ) : null}
 
-        <AutomationPanel view="credits" locale={settings.locale} now={now} />
+        {automation ? <AutomationPanel view="credits" locale={settings.locale} now={now} /> : null}
 
         <details className="connection-details">
           <summary>
@@ -153,13 +156,14 @@ export function OverviewPanel({
           </strong>
         </div>
         <button
-          className="ghost-button ghost-button--accent"
+          className="ghost-button ghost-button--accent glass-surface"
           disabled={snapshot.canRefresh === false || snapshot.isRefreshing}
           onClick={() => {
             void onRefresh()
           }}
           type="button"
         >
+          <GlassMaterial radius={10} />
           <HistoryIcon />
           <span>{snapshot.isRefreshing ? copy.syncing : copy.refresh}</span>
         </button>
@@ -194,21 +198,26 @@ function QuotaCard({
 
   return (
     <div
-      className={`quota-card quota-card--${tone}`}
+      className={`quota-card glass-surface quota-card--${tone}`}
       style={{ '--metric-progress': `${progress}%` } as CSSProperties}
     >
+      <GlassMaterial radius={16} />
       <div className="quota-card__head">
         <span className="quota-card__label">{formatWindowLabel(windowState, locale)}</span>
-        <span className="quota-card__mode">{modeLabel}</span>
-      </div>
-      <div className="quota-card__value">
-        {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
+        <span className="quota-card__reading">
+          <span className="quota-card__mode">{modeLabel}</span>
+          <strong className="quota-card__value">
+            {displayPercent === undefined ? '--' : `${Math.round(displayPercent)}%`}
+          </strong>
+        </span>
       </div>
       <span className="quota-card__progress" aria-hidden="true">
         <span />
       </span>
-      <p className="quota-card__reset">{formatQuotaResetHint(seconds, locale)}</p>
-      <p className="quota-card__date">{formatAbsoluteDate(windowState.resetsAt, locale)}</p>
+      <div className="quota-card__timing">
+        <p className="quota-card__reset">{formatQuotaResetHint(seconds, locale)}</p>
+        <p className="quota-card__date">{formatAbsoluteDate(windowState.resetsAt, locale)}</p>
+      </div>
     </div>
   )
 }

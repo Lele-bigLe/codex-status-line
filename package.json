@@ -14,6 +14,10 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
+    "dev:tauri": "cargo tauri dev",
+    "dev:tauri:ui": "vite --config vite.tauri.config.ts",
+    "build:tauri:ui": "vite build --config vite.tauri.config.ts",
+    "build:tauri": "cargo tauri build",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
@@ -24,6 +28,8 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@rc-component/picker": "1.16.0",
+    "dayjs": "1.11.23",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {

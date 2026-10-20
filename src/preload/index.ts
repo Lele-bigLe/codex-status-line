@@ -1,62 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type {
-  AppSettings,
-  BootstrapPayload,
-  CapsuleDragMovePayload,
-  CodexStatusApi,
-  PreferencesPayload,
-  UsageSnapshot,
-  WindowPreferences
-} from '../shared/capsule'
+import {
+  createCodexStatusApi,
+  DESKTOP_COMMANDS,
+  DESKTOP_EVENTS,
+  type DesktopEvent,
+  type DesktopEventPayload
+} from '../shared/desktopApi'
 
-const CHANNELS = {
-  bootstrap: 'codex-status:bootstrap',
-  refresh: 'codex-status:refresh',
-  updateSettings: 'codex-status:update-settings',
-  closePanel: 'codex-status:close-panel',
-  openPanel: 'codex-status:open-panel',
-  moveCapsuleWindow: 'codex-status:move-capsule-window',
-  finishCapsuleWindowDrag: 'codex-status:finish-capsule-window-drag',
-  snapshotUpdated: 'codex-status:snapshot-updated',
-  preferencesUpdated: 'codex-status:preferences-updated',
-  command: 'codex-status:command'
-} as const
-
-const api: CodexStatusApi = {
-  getAutomation: () => ipcRenderer.invoke('codex-status:get-automation'),
-  refreshAutomation: () => ipcRenderer.invoke('codex-status:refresh-automation'),
-  consumeResetCredit: (accountKey) => ipcRenderer.invoke('codex-status:consume-reset-credit', accountKey),
-  saveSchedule: (input) => ipcRenderer.invoke('codex-status:save-schedule', input),
-  setScheduleEnabled: (id, enabled) => ipcRenderer.invoke('codex-status:enable-schedule', id, enabled),
-  deleteSchedule: (id) => ipcRenderer.invoke('codex-status:delete-schedule', id),
-  onAutomationUpdated: (listener) => subscribe('codex-status:automation-updated', listener),
-  getFeishuSettings: () => ipcRenderer.invoke('codex-status:get-feishu-settings'),
-  saveFeishuSettings: (settings) => ipcRenderer.invoke('codex-status:save-feishu-settings', settings),
-  testFeishuNotification: () => ipcRenderer.invoke('codex-status:test-feishu-notification'),
-  onFeishuStatusUpdated: (listener) => subscribe('codex-status:feishu-status-updated', listener),
-  setTaskMuted: (id, muted) => ipcRenderer.invoke('codex-status:mute-task', id, muted),
-  removeTask: (id) => ipcRenderer.invoke('codex-status:remove-task', id),
-  restoreTask: (threadId) => ipcRenderer.invoke('codex-status:restore-task', threadId),
-  setTaskWindowPinned: (pinned) => ipcRenderer.invoke('codex-status:pin-task-window', pinned),
-  onTaskWindowUpdated: (listener) => subscribe('codex-status:task-window-updated', listener),
-  getTasks: () => ipcRenderer.invoke('codex-status:get-tasks'),
-  copyTaskSession: (id) => ipcRenderer.invoke('codex-status:copy-task-session', id),
-  onTasksUpdated: (listener) => subscribe('codex-status:tasks-updated', listener),
-  bootstrap: () => ipcRenderer.invoke(CHANNELS.bootstrap) as Promise<BootstrapPayload>,
-  refreshStatus: () => ipcRenderer.invoke(CHANNELS.refresh) as Promise<UsageSnapshot>,
-  updateSettings: (patch: Partial<AppSettings>) =>
-    ipcRenderer.invoke(CHANNELS.updateSettings, patch) as Promise<PreferencesPayload>,
-  closePanel: () => ipcRenderer.invoke(CHANNELS.closePanel) as Promise<void>,
-  openPanel: (view) => ipcRenderer.invoke(CHANNELS.openPanel, view) as Promise<void>,
-  moveCapsuleWindow: (payload: CapsuleDragMovePayload) =>
-    ipcRenderer.invoke(CHANNELS.moveCapsuleWindow, payload) as Promise<WindowPreferences>,
-  finishCapsuleWindowDrag: () =>
-    ipcRenderer.invoke(CHANNELS.finishCapsuleWindowDrag) as Promise<WindowPreferences>,
-  onSnapshotUpdated: (listener) => subscribe(CHANNELS.snapshotUpdated, listener),
-  onPreferencesUpdated: (listener) => subscribe(CHANNELS.preferencesUpdated, listener),
-  onCommand: (listener) => subscribe(CHANNELS.command, listener)
-}
+const api = createCodexStatusApi({
+  invoke: (command, ...args) => ipcRenderer.invoke(DESKTOP_COMMANDS[command], ...args),
+  subscribe
+})
 
 if (process.contextIsolated) {
   try {
@@ -72,8 +27,15 @@ if (process.contextIsolated) {
   window.codexStatus = api
 }
 
-function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
-  const wrappedListener = (_event: Electron.IpcRendererEvent, payload: T): void => {
+function subscribe<K extends DesktopEvent>(
+  event: K,
+  listener: (payload: DesktopEventPayload<K>) => void
+): () => void {
+  const channel = DESKTOP_EVENTS[event]
+  const wrappedListener = (
+    _event: Electron.IpcRendererEvent,
+    payload: DesktopEventPayload<K>
+  ): void => {
     listener(payload)
   }
 

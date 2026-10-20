@@ -10,6 +10,8 @@ import {
   type ScheduleRepeat
 } from '../../../shared/automation'
 import type { LocaleCode } from '../../../shared/capsule'
+import { SchedulePickerField } from './SchedulePickerField'
+import { GlassMaterial } from './GlassMaterial'
 
 function localDateInput(value: string): string {
   const date = new Date(value)
@@ -21,15 +23,6 @@ function defaultEndDate(): string {
   const date = new Date()
   date.setMonth(date.getMonth() + 1)
   return localDateKey(date)
-}
-
-function openDatePicker(event: React.MouseEvent<HTMLInputElement>): void {
-  try {
-    event.currentTarget.showPicker()
-    event.preventDefault()
-  } catch {
-    /* 保留原生编辑和图标选择。 */
-  }
 }
 
 export function AutomationPanel({
@@ -185,15 +178,15 @@ export function AutomationPanel({
           <>
             <p className="automation-caption">
               {text(
-                '优先使用最早到期的可用卡。',
-                'The available credit expiring soonest is used first.'
+                '选择要使用的卡片，建议优先使用最早到期的卡。',
+                'Choose a credit to use. We recommend the one expiring soonest.'
               )}
             </p>
             {!account.creditsComplete ? (
               <p className="automation-message automation-message--warning">
                 {text(
-                  '官方未提供完整卡片明细，暂时无法确定最早到期卡。',
-                  'Complete credit details are unavailable; earliest expiry cannot be determined.'
+                  '官方未提供完整卡片明细，请刷新后再使用。',
+                  'Complete credit details are unavailable. Refresh before using a credit.'
                 )}
               </p>
             ) : null}
@@ -207,14 +200,16 @@ export function AutomationPanel({
                 .map((credit) => {
                   const expired = Boolean(credit.expiresAt && Date.parse(credit.expiresAt) <= now)
                   const status = expired ? 'expired' : credit.status
+                  const pending = snapshot.pendingResetCreditId === credit.id
                   const days = credit.expiresAt
                     ? Math.ceil((Date.parse(credit.expiresAt) - now) / 86400000)
                     : undefined
                   return (
                     <article
-                      className={`reset-credit${status === 'available' ? '' : ' reset-credit--inactive'}`}
+                      className={`reset-credit glass-surface${status === 'available' ? '' : ' reset-credit--inactive'}`}
                       key={credit.id}
                     >
+                      <GlassMaterial radius={16} />
                       <div className="automation-heading">
                         <strong>
                           {credit.title === 'Full reset (Weekly + 5 hr)'
@@ -239,13 +234,39 @@ export function AutomationPanel({
                           ? text('无到期限制', 'No expiration')
                           : absolute(credit.expiresAt)}
                       </p>
-                      <div className="automation-caption">
-                        {days !== undefined && days > 0
-                          ? text(`剩余 ${days} 天`, `${days} days left`)
-                          : null}
-                        {account.creditsComplete && credits[0]?.id === credit.id ? (
-                          <span className="credit-priority">{text('优先使用', 'Used first')}</span>
-                        ) : null}
+                      <div className="reset-credit__footer">
+                        <div className="automation-caption">
+                          {days !== undefined && days > 0
+                            ? text(`剩余 ${days} 天`, `${days} days left`)
+                            : null}
+                          {account.creditsComplete && credits[0]?.id === credit.id ? (
+                            <span className="credit-priority">
+                              {text('建议优先使用', 'Use first')}
+                            </span>
+                          ) : null}
+                        </div>
+                        <button
+                          className="ghost-button ghost-button--accent"
+                          type="button"
+                          disabled={
+                            disabled ||
+                            (snapshot.pendingReset
+                              ? !pending
+                              : !account.creditsComplete ||
+                                !credits.some((item) => item.id === credit.id))
+                          }
+                          onClick={() => {
+                            void act(() =>
+                              window.codexStatus.consumeResetCredit(account.key, credit.id)
+                            )
+                          }}
+                        >
+                          {pending
+                            ? snapshot.redeeming
+                              ? text('处理中…', 'Processing…')
+                              : text('重试确认本次重置', 'Confirm pending reset')
+                            : text('使用此卡', 'Use this credit')}
+                        </button>
                       </div>
                     </article>
                   )
@@ -256,28 +277,31 @@ export function AutomationPanel({
                 {text('没有可用的重置卡。', 'No reset credits available.')}
               </p>
             ) : null}
-            <button
-              className="ghost-button ghost-button--accent"
-              type="button"
-              disabled={
-                disabled ||
-                (!snapshot.pendingReset && (!account.creditsComplete || !credits.length))
-              }
-              onClick={() => {
-                void act(() => window.codexStatus.consumeResetCredit(account.key))
-              }}
-            >
-              {snapshot.redeeming
-                ? text('处理中…', 'Processing…')
-                : snapshot.pendingReset
-                  ? text('重试确认本次重置', 'Confirm pending reset')
-                  : text('使用重置卡', 'Use reset credit')}
-            </button>
+            {snapshot.pendingResetCreditId &&
+            !account.credits.some((credit) => credit.id === snapshot.pendingResetCreditId) ? (
+              <button
+                className="ghost-button ghost-button--accent"
+                type="button"
+                disabled={disabled}
+                onClick={() => {
+                  void act(() =>
+                    window.codexStatus.consumeResetCredit(
+                      account.key,
+                      snapshot.pendingResetCreditId!
+                    )
+                  )
+                }}
+              >
+                {snapshot.redeeming
+                  ? text('处理中…', 'Processing…')
+                  : text('重试确认本次重置', 'Confirm pending reset')}
+              </button>
+            ) : null}
             {snapshot.pendingReset ? (
               <p className="automation-caption">
                 {text(
-                  '上次兑换结果尚未确认，重试会确认同一张卡。',
-                  'The previous redemption is unconfirmed. Retrying confirms the same credit.'
+                  '上次兑换结果尚未确认，重试会确认同一张卡；确认前无法使用其他卡。',
+                  'The previous redemption is unconfirmed. Retry the same credit before using another one.'
                 )}
               </p>
             ) : null}
@@ -377,18 +401,20 @@ export function AutomationPanel({
         <h3>{text('定时任务', 'Schedules')}</h3>
         {refreshButton}
       </div>
-      <p className="automation-caption">
-        {text(
-          '到时间发送一条简短的 Codex 请求，尝试启动额度周期，会消耗少量额度。已在计时的目标周期会跳过。',
-          'Send a short Codex request at the scheduled time to start a usage window. This uses a small amount of quota. An active target window is skipped.'
-        )}
-      </p>
-      <p className="automation-caption">
-        {text(
-          '应用需保持运行，电脑需保持唤醒；错过时间不补发。',
-          'Keep the app running and the computer awake. Missed runs are not replayed.'
-        )}
-      </p>
+      <div className="automation-intro">
+        <p className="automation-caption">
+          {text(
+            '到时间发送一条简短的 Codex 请求，尝试启动额度周期，会消耗少量额度。已在计时的目标周期会跳过。',
+            'Send a short Codex request at the scheduled time to start a usage window. This uses a small amount of quota. An active target window is skipped.'
+          )}
+        </p>
+        <p className="automation-caption">
+          {text(
+            '应用需保持运行，电脑需保持唤醒；错过时间不补发。',
+            'Keep the app running and the computer awake. Missed runs are not replayed.'
+          )}
+        </p>
+      </div>
       {feedback}
       {account ? (
         <p className="automation-caption">
@@ -396,7 +422,7 @@ export function AutomationPanel({
         </p>
       ) : null}
       <form
-        className="schedule-form"
+        className="schedule-form glass-surface"
         onSubmit={(event) => {
           event.preventDefault()
           if (!account) return
@@ -421,48 +447,58 @@ export function AutomationPanel({
           })
         }}
       >
-        <label>
-          {text('任务名称', 'Name')}
-          <input
-            maxLength={160}
-            value={name}
+        <GlassMaterial radius={16} />
+        <div className="schedule-fields">
+          <label>
+            {text('任务名称', 'Name')}
+            <input
+              maxLength={160}
+              value={name}
+              disabled={busy}
+              placeholder={text('额度周期触发', 'Start usage window')}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label>
+            {text('目标周期', 'Target window')}
+            <select
+              value={minutes}
+              disabled={disabled || !account?.windows.length}
+              onChange={(event) => setMinutes(event.target.value)}
+            >
+              {!account?.windows.length ? (
+                <option value="">{text('当前未获取可用周期', 'No windows available')}</option>
+              ) : null}
+              {[...new Set(account?.windows.map((window) => window.minutes))].map((value) => (
+                <option key={value} value={value}>
+                  {cycleLabel(value, english)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <fieldset className="schedule-start-time">
+          <legend>{text('开始时间', 'Start time')}</legend>
+          <SchedulePickerField
+            label={text('日期', 'Date')}
+            value={startsAt.slice(0, 10)}
+            min={localDateKey(new Date(now))}
             disabled={busy}
-            placeholder={text('额度周期触发', 'Start usage window')}
-            onChange={(event) => setName(event.target.value)}
+            locale={locale}
+            onChange={(date) => setStartsAt(`${date}T${startsAt.slice(11)}`)}
           />
-        </label>
-        <label>
-          {text('目标周期', 'Target window')}
-          <select
-            value={minutes}
-            disabled={disabled || !account?.windows.length}
-            onChange={(event) => setMinutes(event.target.value)}
-          >
-            {!account?.windows.length ? (
-              <option value="">{text('当前未获取可用周期', 'No windows available')}</option>
-            ) : null}
-            {[...new Set(account?.windows.map((window) => window.minutes))].map((value) => (
-              <option key={value} value={value}>
-                {cycleLabel(value, english)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {text('开始时间', 'Start time')}
-          <input
-            type="datetime-local"
-            required
-            value={startsAt}
-            min={localDateInput(new Date(now).toISOString())}
+          <SchedulePickerField
+            label={text('时间', 'Time')}
+            picker="time"
+            value={startsAt.slice(11)}
             disabled={busy}
-            onClick={openDatePicker}
-            onChange={(event) => setStartsAt(event.target.value)}
+            locale={locale}
+            onChange={(time) => setStartsAt(`${startsAt.slice(0, 10)}T${time}`)}
           />
           <span className="automation-caption">
             {Intl.DateTimeFormat().resolvedOptions().timeZone}
           </span>
-        </label>
+        </fieldset>
         <div className="schedule-repeat-settings">
           <div className="schedule-repeat-toggle">
             <span>{text('重复执行任务', 'Repeat task')}</span>
@@ -569,18 +605,14 @@ export function AutomationPanel({
                 </select>
               </label>
               {endMode === 'date' ? (
-                <label>
-                  {text('结束日期', 'End date')}
-                  <input
-                    type="date"
-                    required
-                    value={endsOn}
-                    min={startsAt.slice(0, 10)}
-                    disabled={busy}
-                    onClick={openDatePicker}
-                    onChange={(event) => setEndsOn(event.target.value)}
-                  />
-                </label>
+                <SchedulePickerField
+                  label={text('结束日期', 'End date')}
+                  value={endsOn}
+                  min={startsAt.slice(0, 10)}
+                  disabled={busy}
+                  locale={locale}
+                  onChange={setEndsOn}
+                />
               ) : null}
             </>
           ) : null}
@@ -617,7 +649,8 @@ export function AutomationPanel({
         {snapshot.schedules.map((schedule) => {
           const running = schedule.lastRun?.phase === 'running'
           return (
-            <article className="cycle-schedule" key={schedule.id}>
+            <article className="cycle-schedule glass-surface" key={schedule.id}>
+              <GlassMaterial radius={16} />
               <div className="automation-heading">
                 <strong>{schedule.name}</strong>
                 <span>

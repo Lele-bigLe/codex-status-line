@@ -2,6 +2,7 @@
 @import './capsule.css';
 @import './tasks.css';
 @import './automation.css';
+@import './overview-glass.css';
 
 .app-shell--panel {
   display: flex;
@@ -210,12 +211,12 @@
 .ghost-button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 12px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
   border-radius: var(--radius-control);
   color: var(--panel-text-2);
-  font-size: var(--font-body);
+  font-size: var(--font-control);
   font-weight: 500;
   transition:
     color 160ms ease,
@@ -224,8 +225,8 @@
 }
 
 .ghost-button svg {
-  width: 19px;
-  height: 19px;
+  width: 16px;
+  height: 16px;
   color: var(--panel-accent);
 }
 

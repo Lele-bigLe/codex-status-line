@@ -2,6 +2,8 @@ import type { AppSettings } from '../../../shared/capsule'
 import type { FeishuStatus } from '../../../shared/feishu'
 import type { TasksSnapshot, TaskWindowState } from '../../../shared/tasks'
 import { COPY } from '../copy'
+import { GlassBackdrop } from './GlassBackdrop'
+import { GlassMaterial } from './GlassMaterial'
 import { CloseIcon } from './Icons'
 import { TaskList } from './TaskList'
 
@@ -62,12 +64,15 @@ export function TasksWindow({
 
   return (
     <div
-      className="app-shell app-shell--tasks"
+      className="app-shell app-shell--tasks app-shell--glass"
       data-theme={settings.theme}
       data-native-glass={Boolean(taskWindow.nativeGlass)}
+      data-expanded={taskWindow.expanded}
     >
+      <GlassBackdrop />
       {!taskWindow.expanded ? (
-        <div className="monitor-peek" data-status={current?.status ?? 'unknown'}>
+        <div className="monitor-peek glass-surface" data-status={current?.status ?? 'unknown'}>
+          <GlassMaterial radius={10} />
           <span
             className="monitor-peek-drag"
             title={english ? 'Drag to move' : '拖动移动'}
@@ -115,7 +120,10 @@ export function TasksWindow({
           </button>
         </div>
       ) : null}
-      <section className="panel panel--tasks monitor-popup" hidden={!taskWindow.expanded}>
+      <section
+        className="panel panel--tasks panel--glass monitor-popup"
+        hidden={!taskWindow.expanded}
+      >
         <TaskList
           snapshot={tasks}
           locale={settings.locale}

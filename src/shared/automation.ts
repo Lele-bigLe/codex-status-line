@@ -73,6 +73,7 @@ export interface AutomationSnapshot {
   refreshing: boolean
   redeeming: boolean
   pendingReset: boolean
+  pendingResetCreditId?: string
   issue?: string
   resetResult?: string
 }

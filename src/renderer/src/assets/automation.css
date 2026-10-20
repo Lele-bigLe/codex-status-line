@@ -1,3 +1,5 @@
+@import '@rc-component/picker/assets/index.css';
+
 .automation-section {
   padding: 16px;
   margin-top: 16px;
@@ -88,6 +90,19 @@
   color: var(--panel-accent);
 }
 
+.reset-credit__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reset-credit__footer button:disabled {
+  cursor: default;
+}
+
 .schedule-form {
   display: grid;
   gap: 12px;
@@ -101,13 +116,250 @@
   font-size: var(--font-caption);
 }
 
+.schedule-start-time {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.schedule-start-time legend {
+  margin-bottom: 6px;
+  color: var(--panel-text-2);
+  font-size: var(--font-caption);
+}
+
+.schedule-start-time > .automation-caption {
+  grid-column: 1 / -1;
+}
+
+.schedule-picker-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--panel-text-2);
+  font-size: var(--font-caption);
+}
+
+.schedule-picker.rc-picker {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+}
+
+.schedule-picker .rc-picker-input {
+  align-items: center;
+}
+
+.schedule-picker .rc-picker-suffix {
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  flex-shrink: 0;
+  color: var(--panel-muted);
+}
+
+.schedule-picker.rc-picker-focused {
+  border-color: var(--panel-accent);
+  outline: 2px solid var(--panel-accent-soft);
+}
+
+.schedule-form .schedule-picker input {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--panel-text);
+  font-size: var(--font-control);
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-picker input::placeholder {
+  color: var(--panel-muted);
+  opacity: 1;
+}
+
+.schedule-picker.rc-picker-invalid {
+  box-shadow: none;
+  border-color: var(--panel-danger);
+}
+
+.schedule-picker.rc-picker-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.schedule-picker-popup.rc-picker-dropdown {
+  z-index: 20;
+  max-width: calc(100vw - 24px);
+  color: var(--panel-text);
+  font-size: var(--font-caption);
+  box-shadow: none;
+}
+
+.schedule-picker-popup .rc-picker-panel {
+  width: 268px;
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-picker-popup .rc-picker-header {
+  align-items: center;
+  min-height: 34px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--panel-line);
+}
+
+.schedule-picker-popup .rc-picker-header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 28px;
+  padding: 0 4px;
+  border-radius: 6px;
+  color: var(--panel-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.schedule-picker-popup .rc-picker-header svg {
+  width: 14px;
+  height: 14px;
+}
+
+.schedule-picker-year-nav {
+  display: inline-flex;
+}
+
+.schedule-picker-popup .schedule-picker-year-nav svg {
+  width: 8px;
+}
+
+.schedule-picker-popup .rc-picker-header-view button {
+  color: var(--panel-text);
+  font-size: var(--font-control);
+  font-weight: 600;
+}
+
+.schedule-picker-popup .rc-picker-body {
+  padding: 6px 8px;
+}
+
+.schedule-picker-popup table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.schedule-picker-popup th {
+  height: 26px;
+  color: var(--panel-muted);
+  font-weight: 400;
+}
+
+.schedule-picker-popup .rc-picker-cell {
+  padding: 2px;
+  color: var(--panel-muted);
+}
+
+.schedule-picker-popup .rc-picker-cell-in-view {
+  color: var(--panel-text);
+}
+
+.schedule-picker-popup .rc-picker-cell .rc-picker-cell-inner {
+  width: 100%;
+  height: 28px;
+  line-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: inherit;
+  transition: none;
+}
+
+.schedule-picker-popup .rc-picker-cell-today .rc-picker-cell-inner {
+  border-color: var(--panel-accent);
+}
+
+.schedule-picker-popup .rc-picker-header button:hover:not(:disabled),
+.schedule-picker-popup .rc-picker-cell:not(.rc-picker-cell-disabled) .rc-picker-cell-inner:hover,
+.schedule-picker-popup .rc-picker-time-panel-cell:not(.rc-picker-time-panel-cell-disabled):hover {
+  background: var(--panel-inset);
+}
+
+.schedule-picker-popup .rc-picker-cell-selected .rc-picker-cell-inner,
+.schedule-picker-popup .rc-picker-cell-hover .rc-picker-cell-inner,
+.schedule-picker-popup .rc-picker-time-panel-column > .rc-picker-time-panel-cell-selected {
+  border-color: var(--panel-accent);
+  background: var(--panel-accent-soft);
+  color: var(--panel-accent);
+  font-weight: 600;
+}
+
+.schedule-picker-popup .rc-picker-time-panel-column {
+  width: 100%;
+  padding: 0 0 160px;
+  overflow-y: auto;
+  background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-scroll) transparent;
+}
+
+.schedule-picker-popup .rc-picker-time-panel-column > li {
+  width: 100%;
+}
+
+.schedule-picker-popup .rc-picker-time-panel-column .rc-picker-time-panel-cell-inner {
+  height: 28px;
+  line-height: 28px;
+  color: var(--panel-text);
+}
+
+.schedule-picker-popup .rc-picker-time-panel-cell-selected .rc-picker-time-panel-cell-inner {
+  color: var(--panel-accent);
+}
+
+.schedule-picker-popup .rc-picker-footer {
+  padding: 6px 8px;
+  border-top: 1px solid var(--panel-line);
+  background: transparent;
+}
+
+.schedule-picker-popup .rc-picker-ok button {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--panel-accent);
+  background: var(--panel-accent-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.schedule-picker-popup button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .schedule-form input,
 .schedule-form select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--panel-line);
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 6px 9px;
   background: var(--panel-bg);
   color: var(--panel-text);
   font: inherit;

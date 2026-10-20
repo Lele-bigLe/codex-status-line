@@ -102,15 +102,16 @@ export class AutomationService {
   ) {}
 
   snapshot(): AutomationSnapshot {
+    const pending = this.state.resetAttempts.find(
+      (attempt) => attempt.accountKey === this.account?.key
+    )
     return {
       account: this.account,
       schedules: this.state.schedules,
       refreshing: Boolean(this.refreshPromise),
       redeeming: Boolean(this.resetPromise),
-      pendingReset: Boolean(
-        this.account &&
-        this.state.resetAttempts.some((attempt) => attempt.accountKey === this.account?.key)
-      ),
+      pendingReset: Boolean(pending),
+      pendingResetCreditId: pending?.creditId,
       issue: this.issue,
       resetResult: this.resetResult
     }
@@ -295,10 +296,15 @@ export class AutomationService {
     return run
   }
 
-  consumeReset(key: unknown): Promise<AutomationSnapshot> {
+  consumeReset(key: unknown, creditId: unknown): Promise<AutomationSnapshot> {
     if (typeof key !== 'string' || !HASH.test(key))
       return Promise.reject(new Error('请刷新账号信息 / Refresh account information first'))
-    if (this.resetPromise) return this.resetPromise
+    if (typeof creditId !== 'string' || !creditId || creditId.length > 512)
+      return Promise.reject(new Error('请选择有效的重置卡 / Select a valid reset credit'))
+    if (this.resetPromise)
+      return Promise.reject(
+        new Error('正在处理重置，请等待本次结果 / A reset is in progress; wait for its result')
+      )
     const revision = this.revision
     this.resetResult = undefined
     const run = (async () => {
@@ -307,13 +313,20 @@ export class AutomationService {
         if (this.stopped) throw new Error('应用正在退出 / App is quitting')
         this.account = account
         let attempt = this.state.resetAttempts.find((item) => item.accountKey === key)
+        if (attempt && attempt.creditId !== creditId)
+          throw new Error(
+            '请先确认上次重置结果，再使用其他卡 / Confirm the pending reset before using another credit'
+          )
         if (!attempt) {
           if (!account.creditsComplete)
             throw new Error(
-              '卡片明细不完整，无法确定最早到期卡 / Credit details are incomplete; the earliest expiry cannot be determined'
+              '卡片明细不完整，请刷新后重试 / Credit details are incomplete; refresh and try again'
             )
-          const credit = usableCredits(account)[0]
-          if (!credit) throw new Error('没有可用的重置卡 / No reset credits are available')
+          const credit = usableCredits(account).find((item) => item.id === creditId)
+          if (!credit)
+            throw new Error(
+              '所选重置卡已不可用，请刷新 / The selected reset credit is unavailable; refresh first'
+            )
           attempt = { accountKey: key, creditId: credit.id, idempotencyKey: randomUUID() }
           const pending = attempt
           // 先落盘兑换标识，再发送请求；超时或重启后仍复用同一次兑换。
