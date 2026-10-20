@@ -3,6 +3,7 @@
   margin-top: 16px;
   border: 1px solid var(--panel-line);
   border-radius: 12px;
+  background: var(--panel-raised);
   color: var(--panel-text);
 }
 
@@ -10,6 +11,7 @@
   margin: 0;
   padding: 0;
   border: 0;
+  background: transparent;
 }
 
 .automation-heading {
@@ -31,7 +33,7 @@
 .automation-heading span,
 .automation-caption {
   color: var(--panel-muted);
-  font-size: 12px;
+  font-size: var(--font-caption);
   line-height: 1.6;
 }
 
@@ -45,7 +47,7 @@
   padding: 9px 11px;
   border-radius: 8px;
   background: var(--panel-inset);
-  font-size: 12px;
+  font-size: var(--font-caption);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -73,7 +75,7 @@
   border: 1px solid var(--panel-line);
   border-radius: 10px;
   background: var(--panel-raised);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 .reset-credit--inactive {
@@ -96,7 +98,7 @@
   display: grid;
   gap: 6px;
   color: var(--panel-text-2);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 .schedule-form input,
@@ -130,6 +132,7 @@
   padding: 14px;
   border: 1px solid var(--panel-line);
   border-radius: 10px;
+  background: var(--panel-inset);
 }
 
 .schedule-repeat-toggle {
@@ -138,7 +141,7 @@
   justify-content: space-between;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--panel-line);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 .schedule-frequency {
@@ -157,7 +160,7 @@
 .schedule-weekdays legend {
   margin-bottom: 8px;
   color: var(--panel-text-2);
-  font-size: 12px;
+  font-size: var(--font-caption);
 }
 
 .schedule-weekdays > div {
