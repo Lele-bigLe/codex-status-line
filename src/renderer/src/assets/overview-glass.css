@@ -64,6 +64,7 @@
 }
 
 .panel.panel--glass {
+  --panel-scrollbar-width: 6px;
   position: relative;
   border-radius: 24px;
   border-color: var(--glass-rim);
@@ -159,6 +160,11 @@
 .panel--glass .panel__content {
   container: panel-content / inline-size;
   padding: 12px 16px;
+  scrollbar-gutter: stable;
+}
+
+.panel--glass .panel__content::-webkit-scrollbar {
+  width: var(--panel-scrollbar-width);
 }
 
 .panel--glass .panel__header {
@@ -177,7 +183,7 @@
 
 .panel--glass .panel__nav {
   flex-wrap: wrap;
-  margin-inline: 16px;
+  margin-inline: 16px calc(16px + var(--panel-scrollbar-width));
   padding: 3px;
   border-radius: 18px;
 }

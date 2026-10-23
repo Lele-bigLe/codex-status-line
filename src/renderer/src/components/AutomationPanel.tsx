@@ -49,8 +49,7 @@ export function AutomationPanel({
           day: '2-digit',
           hour: '2-digit',
           minute: '2-digit',
-          hourCycle: 'h23',
-          timeZoneName: 'long'
+          hourCycle: 'h23'
         }).format(new Date(value))
       : text('未提供', 'Not provided')
   const [snapshot, setSnapshot] = useState<AutomationSnapshot>({
