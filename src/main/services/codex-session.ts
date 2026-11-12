@@ -204,7 +204,7 @@ export class CodexSession {
     emit: (output: CodexOutput) => Promise<void>
   ): Promise<void> {
     if (this.running) throw new Error('该会话正在处理，请先回答待答问题或等待本轮结束。')
-    if (task.status === 'running' || task.status === 'unknown')
+    if (task.status === 'running' || task.status === 'waiting_input' || task.status === 'unknown')
       throw new Error('会话正在其他窗口执行或状态未知，请等待其结束后再从飞书发起。')
     const reuseCreated = this.createdThreadId === task.threadId && Boolean(this.child)
     if (task.status === 'idle' && !reuseCreated)

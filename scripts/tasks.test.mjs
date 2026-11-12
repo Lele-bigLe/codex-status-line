@@ -92,6 +92,7 @@ test('local task lifecycle: partial writes, deduplication, restart and pause', a
     assert.equal(monitor.snapshot().tasks[0].startedAt, '2026-09-16T10:00:00.000Z')
     const request = {
       type: 'response_item',
+      timestamp: '2026-09-16T10:00:00Z',
       payload: {
         type: 'message',
         role: 'user',

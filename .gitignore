@@ -7,3 +7,5 @@ out
 .vscode/
 /.vscode/
 /.vscode/settings.json
+/src-tauri/target/
+/src-tauri/gen/

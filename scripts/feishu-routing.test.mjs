@@ -126,6 +126,9 @@ export class WSClient {
 `
 const sdkUrl = `data:text/javascript;base64,${Buffer.from(fakeSdk).toString('base64')}`
 const { state } = await import(sdkUrl)
+const cardText = (card) => card.elements.flatMap((element) => [
+  element.text?.content || '', ...(element.elements || []).map((part) => part.content || '')
+]).join('\n')
 const { FeishuReceiver } = await import(
   compile('../src/main/services/feishu-receiver.ts', [
     ["'@larksuiteoapi/node-sdk'", JSON.stringify(sdkUrl)],
@@ -186,7 +189,7 @@ test('receiver filters events, deduplicates, returns routing receipts and stops 
   assert.equal(receiver.getStatus().target, a.threadId)
   await deliver(event('继续', { parent_id: 'receipt-4' }))
   assert.equal(state.sent.at(-1).data.msg_type, 'interactive')
-  assert.match(JSON.parse(state.sent.at(-1).data.content).elements[0].text.content, /thread-a/)
+  assert.match(cardText(JSON.parse(state.sent.at(-1).data.content)), /thread-a/)
   assert.equal(receiver.getStatus().phase, 'replied')
   state.failReply = true
   await deliver(event('继续'))
@@ -204,7 +207,7 @@ test('receiver filters events, deduplicates, returns routing receipts and stops 
   assert.equal(connection.closed, true)
 })
 
-test('card buttons select stable project/session IDs, update bindings and reject stale or unauthorized actions', async () => {
+test('card dropdowns select stable project/session IDs, update bindings and reject stale or unauthorized actions', async () => {
   state.sent = []
   const snapshot = { monitoring: true, tasks: [a, b, c] }
   const receiver = new FeishuReceiver(
@@ -242,11 +245,13 @@ test('card buttons select stable project/session IDs, update bindings and reject
       token: 'click-' + ++id,
       operator: { open_id: 'user' },
       context: { open_chat_id: 'chat', open_message_id: 'receipt-1' },
-      action: { value },
+      action: typeof value === 'string' ? { tag: 'select_static', option: value } : { value },
       ...overrides
     })
   const projectCard = await send('项目列表')
-  const projectButton = projectCard.elements.find((element) => element.extra).extra.value
+  const selects = (card) => card.elements.flatMap((element) => element.actions || [])
+    .filter((action) => action.tag === 'select_static')
+  const projectButton = selects(projectCard)[0].options[0].value
   assert.equal(click(projectButton, { operator: { open_id: 'other' } }).toast.type, 'error')
   assert.equal(
     click(projectButton, { context: { open_chat_id: 'other', open_message_id: 'receipt-1' } }).toast
@@ -254,9 +259,9 @@ test('card buttons select stable project/session IDs, update bindings and reject
     'error'
   )
   const sessionCard = click(projectButton).card.data
-  assert.match(sessionCard.elements[0].text.content, /D:\/project-a/)
+  assert.equal(selects(sessionCard)[0].options.find((option) => option.value === selects(sessionCard)[0].initial_option).text.content, 'project-a')
   assert.equal(
-    sessionCard.elements.filter((element) => element.extra).length,
+    selects(sessionCard)[1].options.length,
     2,
     'project selection immediately shows its sessions'
   )
@@ -265,10 +270,11 @@ test('card buttons select stable project/session IDs, update bindings and reject
     'warning',
     'obsolete buttons cannot select another item'
   )
-  const sessionButton = sessionCard.elements.find((element) => element.extra).extra.value
+  const sessionButton = selects(sessionCard)[1].options[0].value
   snapshot.tasks = [c, b, a]
   const selected = click(sessionButton, { token: 'repeatable' })
-  assert.match(selected.card.data.elements[0].text.content, /thread-a/)
+  const selectedSession = selects(selected.card.data)[1]
+  assert.match(selectedSession.options.find((option) => option.value === selectedSession.initial_option).text.content, /thread-a/)
   assert.deepEqual(
     click(sessionButton, { token: 'repeatable' }),
     selected,
@@ -276,16 +282,16 @@ test('card buttons select stable project/session IDs, update bindings and reject
   )
   assert.equal(receiver.getStatus().target, a.threadId)
   assert.match(
-    (await send('继续')).elements[0].text.content,
+    cardText(await send('继续')),
     /thread-a/,
     'direct messages continue the selected session'
   )
   assert.match(
-    (await send('继续', 'receipt-1')).elements[0].text.content,
+    cardText(await send('继续', 'receipt-1')),
     /thread-a/,
     'updated card is bound to the selected session'
   )
-  const switchProject = selected.card.data.elements.at(-1).actions[0].value
+  const switchProject = selects(selected.card.data)[0].options[1].value
   click(switchProject)
   assert.match(
     (await send('继续', 'receipt-1')).elements[0].text.content,
@@ -296,7 +302,7 @@ test('card buttons select stable project/session IDs, update bindings and reject
   assert.equal(click(switchProject).toast.type, 'error')
 })
 
-test('execution bridge keeps commands local, forwards full answers and routes quoted user input to Codex', async () => {
+test('execution bridge keeps commands local, previews long answers and routes quoted user input to Codex', async () => {
   state.sent = []
   const sessionUrl = `data:text/javascript;base64,${Buffer.from(
     `
@@ -371,10 +377,9 @@ test('execution bridge keeps commands local, forwards full answers and routes qu
   await send('请开始对话')
   assert.equal(session.state.starts.length, 1)
   assert.equal(session.state.starts[0].text, '请开始对话')
-  const replyText = state.sent.map(
-    (request) => JSON.parse(request.data.content).elements[0].text.content
-  )
-  assert.equal(replyText.filter((text) => /^答+$/.test(text)).join(''), '答'.repeat(6500))
+  const replies = state.sent.map((request) => JSON.parse(request.data.content))
+  const preview = replies.flatMap((card) => card.elements).find((element) => element.text?.content.startsWith('答'))
+  assert.equal(preview.text.content, '答'.repeat(240) + '\n…')
   const questionMessageId = 'receipt-' + state.sent.length
   await send('蓝桥', questionMessageId)
   assert.deepEqual(session.state.answers, [{ text: '蓝桥', key: 'question-key', questionId: 'q1' }])

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { LocaleCode } from '../../../shared/capsule'
 import type { TaskRecord, TasksSnapshot } from '../../../shared/tasks'
 
-const STATES = ['idle', 'running', 'completed', 'interrupted', 'unknown'] as const
+const STATES = ['idle', 'running', 'waiting_input', 'completed', 'interrupted', 'unknown'] as const
 
 export function TaskList({
   snapshot,
@@ -25,23 +25,11 @@ export function TaskList({
 }): React.JSX.Element {
   const en = locale === 'en-US'
   const labels = en
-    ? {
-        idle: 'Not started',
-        running: 'Running',
-        completed: 'Ended',
-        interrupted: 'Interrupted',
-        unknown: 'Unknown'
-      }
-    : {
-        idle: '未开始',
-        running: '进行中',
-        completed: '本轮结束',
-        interrupted: '已中断',
-        unknown: '状态未知'
-      }
+    ? { idle: 'Not started', running: 'Running', waiting_input: 'Needs input', completed: 'Ended', interrupted: 'Interrupted', unknown: 'Unknown' }
+    : { idle: '尚未开始', running: '进行中', waiting_input: '待回答', completed: '本轮结束', interrupted: '已中断', unknown: '状态未知' }
   const unknownHint = en
-    ? 'No new task status has been received since monitoring was interrupted. No confirmation is needed.'
-    : '监视中断后，尚未收到新的任务状态，无需手动确认。'
+    ? 'The available logs do not confirm the current state. New activity will update it automatically.'
+    : '可用日志尚不足以确认当前状态；新的活动会自动更新。'
   const [expanded, setExpanded] = useState<string>()
   const [filter, setFilter] = useState<TaskRecord['status']>()
   const visibleTasks = snapshot.tasks.filter((task) => !filter || task.status === filter)
@@ -71,11 +59,11 @@ export function TaskList({
   }
   function elapsed(task: TaskRecord): string {
     const duration =
-      task.status === 'running' && task.startedAt
+      (task.status === 'running' || task.status === 'waiting_input') && !task.endedAt && task.startedAt
         ? now - Date.parse(task.startedAt)
         : (task.durationMs ??
           (task.startedAt && task.status !== 'unknown'
-            ? Date.parse(task.updatedAt) - Date.parse(task.startedAt)
+            ? Date.parse(task.endedAt ?? task.updatedAt) - Date.parse(task.startedAt)
             : undefined))
     if (duration === undefined || !Number.isFinite(duration) || duration < 0) return '—'
     const seconds = Math.floor(duration / 1000),
@@ -202,7 +190,7 @@ export function TaskList({
                   : '再次点击已选状态，即可查看全部会话。'
                 : snapshot.monitoring
                   ? en
-                    ? 'Open a project in Codex on this computer and send a message. Its session will appear here.'
+                    ? 'Open a project in Codex on your computer and send a message. Its session will appear here automatically.'
                     : '在电脑 Codex 中打开项目并发起对话，对应会话会自动显示在这里。'
                   : en
                     ? 'Enable monitoring in Settings.'
@@ -226,20 +214,20 @@ export function TaskList({
                   }
                 >
                   <span className="monitor-state-icon" aria-hidden="true">
-                    {task.status === 'idle'
-                      ? '○'
-                      : task.status === 'completed'
-                        ? '✓'
-                        : task.status === 'interrupted'
-                          ? '×'
-                          : task.status === 'running'
-                            ? '·'
-                            : '?'}
+                    {task.status === 'completed'
+                      ? '✓'
+                      : task.status === 'interrupted'
+                        ? '×'
+                        : task.status === 'running'
+                          ? '·'
+                          : task.status === 'waiting_input'
+                            ? '!'
+                            : task.status === 'idle' ? '○' : '?'}
                   </span>
                   <strong title={title}>{title}</strong>
                   <span
                     className="monitor-status"
-                    title={task.status === 'unknown' ? unknownHint : undefined}
+                    title={task.status === 'unknown' ? unknownHint : task.pendingQuestions?.map((q) => q.text).join('\n')}
                   >
                     {labels[task.status]}
                   </span>
@@ -281,6 +269,7 @@ export function TaskList({
                 {expanded === task.threadId ? (
                   <div className="monitor-task-details">
                     {task.status === 'unknown' ? <p>{unknownHint}</p> : null}
+                    {task.pendingQuestions?.map((question, index) => <p key={`${question.callId}:${index}`}>{question.text}</p>)}
                     {task.requestSummary ? <p>{task.requestSummary}</p> : null}
                     <p>{task.cwd}</p>
                     <p>

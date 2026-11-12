@@ -49,6 +49,7 @@ export type RouteAction =
 const STATUS_LABELS: Record<TaskRecord['status'], string> = {
   idle: '未开始',
   running: '进行中',
+  waiting_input: '待回答',
   completed: '本轮已结束',
   interrupted: '已中断',
   unknown: '状态未知'

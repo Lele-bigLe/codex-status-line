@@ -92,7 +92,7 @@ function selectionCard(reply: RouteReply): {
     if (target) {
       if (reply.view === 'turn' || reply.view === 'details')
         navigation.push(button('继续此会话', { kind: 'session', value: target.threadId }, true))
-      else if (reply.view !== 'details')
+      else
         navigation.push(button('详情', { kind: 'details', value: target.threadId }))
       navigation.push(button('切换', { kind: 'projects' }))
     } else {

@@ -7,14 +7,16 @@ import { CAPSULE_WINDOW_SIZE, ORB_WINDOW_SIZE } from '../src/shared/capsule.ts'
 // 只执行窗口边界函数，避免导入主进程时启动 Electron。
 const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
 const body = source.match(/function setCapsuleBounds\(bounds: Rectangle\): void \{[\s\S]*?\n\}/)?.[0]
-assert.ok(body)
+const helper = source.match(/function setWindowBoundsWithoutFocus\(window: BrowserWindow, bounds: Rectangle\): void \{[\s\S]*?\n\}/)?.[0]
+assert.ok(body && helper)
 const calls = []
 const current = { x: 100, y: 100, ...CAPSULE_WINDOW_SIZE }
 const applyBounds = new Function(
   'mainWindow',
-  ts.transpileModule(body, {}).outputText + '\nreturn setCapsuleBounds'
+  ts.transpileModule(body + '\n' + helper, {}).outputText + '\nreturn setCapsuleBounds'
 )({
   isDestroyed: () => false,
+  isFocused: () => true,
   getBounds: () => current,
   setPosition: (...args) => calls.push(['position', ...args]),
   setBounds: (...args) => calls.push(['bounds', ...args])
