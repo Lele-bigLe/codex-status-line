@@ -1075,6 +1075,43 @@ body {
 }
 
 .receiver-settings h3 { font-size: 14px; }
+.receiver-step,
+.receiver-guide__body {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+.receiver-step,
+.receiver-guide {
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-line);
+}
+.receiver-step h4,
+.receiver-guide > summary {
+  color: var(--panel-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.receiver-guide > summary { cursor: pointer; }
+.receiver-guide__body { margin-top: 12px; }
+.receiver-instructions {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--panel-text-2);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.receiver-instructions li + li { margin-top: 8px; }
+.receiver-instructions code { display: block; }
+.receiver-instructions .receiver-command { display: inline; }
+.receiver-settings code,
+.receiver-settings .task-help {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.receiver-settings a { color: var(--panel-accent); text-decoration: underline; }
+.settings-save-hint { flex: 1; min-width: 0; text-align: right; }
 .session-grant { padding: 12px; border: 1px solid var(--panel-line); border-radius: 8px; display: grid; gap: 8px; font-size: 13px; }
 .session-grant small { white-space: pre-line; overflow-wrap: anywhere; color: var(--panel-muted); }
 .session-grant__actions { display: flex; align-items: center; gap: 8px; min-width: 0; }

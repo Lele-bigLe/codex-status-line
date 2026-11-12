@@ -60,6 +60,7 @@ import {
   taskHoverExpanded,
   type TaskWindowState,
   type TasksSnapshot,
+  type TaskNotificationRecord,
   type TaskRecord
 } from '../shared/tasks'
 
@@ -121,7 +122,7 @@ let taskChanges: Promise<void> = Promise.resolve()
 let taskSnapshot: TasksSnapshot = { tasks: [], monitoring: false }
 const taskNotifications = new Set<Notification>()
 
-function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
+function updateTasks(snapshot: TasksSnapshot, completed: TaskNotificationRecord[]): void {
   const countChanged = taskSnapshot.tasks.length !== snapshot.tasks.length
   taskSnapshot = snapshot
   if (countChanged && taskWindowState.expanded) resizeTaskWindow(true)
@@ -139,7 +140,7 @@ function updateTasks(snapshot: TasksSnapshot, completed: TaskRecord[]): void {
           )
       )
       return eligible.length
-        ? taskNotificationContent(eligible, persistedState.settings.locale === 'en-US')
+        ? taskNotificationContent(eligible, persistedState.settings.locale === 'en-US', true)
         : undefined
     })
   }
@@ -457,7 +458,10 @@ if (hasSingleInstanceLock) {
       async (grant, settings, active) => {
         await feishuNotifier.authorizeSession(grant, settings, active)
         sendToRenderers('codex-status:feishu-permission-updated', grant)
-      }, (task) => taskMonitor.addSession(task))
+      }, (task) => taskMonitor.addSession(task), {
+        load: () => feishuNotifier.getRecentSessions(),
+        save: (selection, settings, active) => feishuNotifier.rememberSession(selection, settings, active)
+      })
     void feishuReceiver.configure(feishuNotifier.getSettings())
 
     if (persistedState.settings.launchAtLogin !== loadedState.settings.launchAtLogin) {

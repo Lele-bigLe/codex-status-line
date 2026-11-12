@@ -178,6 +178,7 @@ export class CodexSession {
     private onIssue: (message: string) => void,
     private options: {
       permission?: CodexPermissionMode
+      mentionRequired?: boolean
       onRuntime?: (runtime: CodexRuntimeInfo) => void
       onTurn?: (turnId: string) => void
       onConfiguration?: (threadId: string, configuration: CodexSessionConfiguration) => void
@@ -186,6 +187,10 @@ export class CodexSession {
 
   get running(): boolean {
     return Boolean(this.task)
+  }
+
+  private get mention(): string {
+    return this.options.mentionRequired === false ? '' : ' @机器人'
   }
 
   setPermission(permission: CodexPermissionMode): void {
@@ -549,7 +554,7 @@ export class CodexSession {
         kind: 'completed',
         text:
           turn?.status === 'completed'
-            ? '本轮已结束。直接 @机器人发送下一条消息即可继续。'
+            ? '本轮已结束。'
             : turn?.status === 'interrupted'
               ? '本轮已停止。'
               : '本轮执行失败，请查看电脑端具体原因。'
@@ -666,7 +671,7 @@ export class CodexSession {
     if (!input) return
     const question = input.questions[input.index]
     this.publish({
-      text: `Codex 需要你回答（${input.index + 1}/${input.questions.length}）\n${question.question}\n${(question.options ?? []).map((option) => `${option.label}：${option.description}`).join('\n')}\n可点击选项，或回复这张卡片并 @机器人输入答案。`,
+      text: `Codex 需要你回答（${input.index + 1}/${input.questions.length}）\n${question.question}\n${(question.options ?? []).map((option) => `${option.label}：${option.description}`).join('\n')}\n可点击选项，或回复这张卡片${this.mention}输入答案。`,
       promptId: key,
       questionId: question.id,
       choices: (question.options ?? []).map((option) => ({
@@ -678,7 +683,7 @@ export class CodexSession {
 
   answer(text: string, key?: string, questionId?: string): string {
     if (!key && this.inputs.size > 1)
-      throw new Error('当前有多个问题，请回复对应的问题卡片并 @机器人作答。')
+      throw new Error(`当前有多个问题，请回复对应的问题卡片${this.mention}作答。`)
     const entry = key ? ([key, this.inputs.get(key)] as const) : this.inputs.entries().next().value
     if (!entry?.[1]) throw new Error('这个问题已结束或已过期，请查看最新问题。')
     const [requestKey, input] = entry

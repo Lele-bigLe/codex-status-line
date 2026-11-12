@@ -202,8 +202,8 @@ export function TaskList({
                   : '再次点击已选状态，即可查看全部会话。'
                 : snapshot.monitoring
                   ? en
-                    ? 'New local Codex activity appears here.'
-                    : '新的本机 Codex 活动会自动显示在这里。'
+                    ? 'Open a project in Codex on this computer and send a message. Its session will appear here.'
+                    : '在电脑 Codex 中打开项目并发起对话，对应会话会自动显示在这里。'
                   : en
                     ? 'Enable monitoring in Settings.'
                     : '可在设置中开启任务监视。'}

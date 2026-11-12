@@ -1,6 +1,6 @@
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
-import type { TaskRecord, TasksSnapshot } from '../../shared/tasks'
+import type { TaskNotificationRecord, TaskRecord, TasksSnapshot } from '../../shared/tasks'
 
 interface SessionMetadata {
   threadId: string
@@ -134,7 +134,8 @@ export class TaskMonitor {
   private lastScan = 0
   private issue?: string
   private changed = false
-  private notifications: TaskRecord[] = []
+  // 回答仅随本轮通知传递，不写入任务历史；任务引用保留至标题补全。
+  private notifications: { task: TaskRecord; answer?: string }[] = []
   private writes: Promise<void> = Promise.resolve()
   private canPersist = true
   private muted = new Set<string>()
@@ -144,7 +145,7 @@ export class TaskMonitor {
   constructor(
     private root: string,
     private stateFile: string,
-    private onChanged: (snapshot: TasksSnapshot, completed: TaskRecord[]) => void
+    private onChanged: (snapshot: TasksSnapshot, completed: TaskNotificationRecord[]) => void
   ) {}
 
   snapshot(): TasksSnapshot {
@@ -524,7 +525,14 @@ export class TaskMonitor {
     this.tasks.delete(`${task.threadId}:`)
     this.tasks.set(task.id, task)
     this.changed = true
-    if (task.status !== 'running' && !this.muted.has(task.threadId)) this.notifications.push(task)
+    if (task.status !== 'running' && !this.muted.has(task.threadId)) {
+      const payload = record(record(value)?.payload)
+      this.notifications.push({
+        task,
+        answer: task.status === 'completed' && typeof payload?.last_agent_message === 'string'
+          ? payload.last_agent_message.trim() : undefined
+      })
+    }
   }
 
   get(id: string): TaskRecord | undefined {
@@ -597,7 +605,8 @@ export class TaskMonitor {
     this.changed = false
     const completed = this.notifications
       .splice(0)
-      .filter((task) => !this.muted.has(task.threadId) && !this.removed.has(task.threadId))
+      .filter(({ task }) => !this.muted.has(task.threadId) && !this.removed.has(task.threadId))
+      .map(({ task, answer }) => ({ ...task, answer }))
     const snapshot = this.snapshot()
     this.onChanged(snapshot, completed)
     // 无法读取原文件时保留它，不用空历史覆盖可能仍可恢复的数据。

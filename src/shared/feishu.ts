@@ -43,6 +43,7 @@ export interface FeishuSettings {
   webhook: string
   secret: string
   receiveEnabled: boolean
+  receiveMode: 'p2p' | 'group'
   appId: string
   appSecret: string
   allowedChatId: string
@@ -74,6 +75,7 @@ export const DEFAULT_FEISHU_SETTINGS: FeishuSettings = {
   webhook: '',
   secret: '',
   receiveEnabled: false,
+  receiveMode: 'p2p',
   appId: '',
   appSecret: '',
   allowedChatId: '',

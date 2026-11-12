@@ -13,6 +13,10 @@ export interface TaskRecord {
   muted?: boolean
 }
 
+export interface TaskNotificationRecord extends TaskRecord {
+  answer?: string
+}
+
 export interface TasksSnapshot {
   tasks: TaskRecord[]
   monitoring: boolean
@@ -27,8 +31,9 @@ export interface TaskWindowState {
 }
 
 export function taskNotificationContent(
-  tasks: TaskRecord[],
-  english: boolean
+  tasks: TaskNotificationRecord[],
+  english: boolean,
+  includeAnswer = false
 ): { title: string; body: string } {
   const label = (task: TaskRecord): string =>
     task.title ||
@@ -42,17 +47,36 @@ export function taskNotificationContent(
       : english
         ? 'Turn ended'
         : '本轮结束'
+  const details = (task: TaskNotificationRecord): string => {
+    if (!includeAnswer) return task.requestSummary || ''
+    const answer = Array.from(task.answer?.trim() || '')
+    const truncated = answer.length > 1200
+    const preview = answer.length
+      ? `${answer.slice(0, 1200).join('')}${truncated ? '\n…' : ''}`
+      : english ? 'No final answer captured for this turn.' : '未读取到本轮最终回答。'
+    const answerLabel = truncated
+      ? (english ? 'Answer (preview)' : '回答（预览）')
+      : (english ? 'Answer' : '回答')
+    const colon = english ? ':' : '：'
+    const request = task.requestSummary || (english ? 'No request captured for this turn.' : '未读取到本轮需求。')
+    return [
+      `${english ? 'Request' : '需求'}${colon}\n${request}`,
+      `${answerLabel}${colon}\n${preview}`
+    ].join('\n\n')
+  }
   if (tasks.length === 1)
-    return { title: `${label(tasks[0])} · ${ended(tasks[0])}`, body: tasks[0].requestSummary || '' }
+    return { title: `${label(tasks[0])} · ${ended(tasks[0])}`, body: details(tasks[0]) }
   return {
     title: english ? `${tasks.length} Codex turns ended` : `${tasks.length} 个 Codex 轮次已结束`,
     body: tasks
       .slice(0, 3)
-      .map(
-        (task) =>
-          `${label(task)} · ${ended(task)}${task.requestSummary ? `：${task.requestSummary.slice(0, 100)}` : ''}`
-      )
-      .join('\n')
+      .map((task) => {
+        const heading = `${label(task)} · ${ended(task)}`
+        return includeAnswer
+          ? `${heading}\n${details(task)}`
+          : `${heading}${task.requestSummary ? `：${task.requestSummary.slice(0, 100)}` : ''}`
+      })
+      .join(includeAnswer ? '\n\n' : '\n')
   }
 }
 

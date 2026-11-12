@@ -1,4 +1,5 @@
 import { net, safeStorage } from 'electron'
+import { Client } from '@larksuiteoapi/node-sdk'
 import { createHmac } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname } from 'node:path'
@@ -11,6 +12,7 @@ import {
   type ExecutionThread,
   type FeishuStatus
 } from '../../shared/feishu'
+import type { ProjectSessionSelection } from './feishu-routing'
 
 class FeishuRequestError extends Error {
   constructor(message: string, readonly retryAfterMs?: number) {
@@ -24,18 +26,23 @@ function validateSettings(value: unknown): FeishuSettings {
     !input ||
     typeof input.enabled !== 'boolean' ||
     (input.mentionAll !== undefined && typeof input.mentionAll !== 'boolean') ||
+    (input.receiveMode !== undefined && input.receiveMode !== 'p2p' && input.receiveMode !== 'group') ||
     typeof input.webhook !== 'string' ||
     typeof input.secret !== 'string' ||
     input.webhook.length > 512 ||
     input.secret.length > 256
   ) throw new Error('飞书配置格式无效 / Invalid Feishu settings')
 
-  const settings = {
+  const settings: FeishuSettings = {
     enabled: input.enabled,
     mentionAll: input.mentionAll ?? DEFAULT_FEISHU_SETTINGS.mentionAll,
     webhook: input.webhook.trim(),
     secret: input.secret.trim(),
     receiveEnabled: input.receiveEnabled === true,
+    // 旧 Webhook 配置默认私聊；旧版已填写 App ID 的协作配置沿用群聊。
+    receiveMode: input.receiveMode ?? (
+      typeof input.appId === 'string' && input.appId.trim() ? 'group' : 'p2p'
+    ),
     appId: typeof input.appId === 'string' ? input.appId.trim() : '',
     appSecret: typeof input.appSecret === 'string' ? input.appSecret.trim() : '',
     allowedChatId: typeof input.allowedChatId === 'string' ? input.allowedChatId.trim() : '',
@@ -53,15 +60,18 @@ function validateSettings(value: unknown): FeishuSettings {
     throw new Error('飞书应用配置格式无效 / Invalid Feishu app settings')
   }
   if (settings.receiveEnabled && (!/^cli_[a-zA-Z0-9]+$/.test(settings.appId) || !settings.appSecret ||
-    !/^oc_[a-zA-Z0-9_-]+$/.test(settings.allowedChatId) || !/^ou_[a-zA-Z0-9_-]+$/.test(settings.allowedUserId))) {
-    throw new Error('请填写应用凭据、允许的群 ID（oc_）和用户 Open ID（ou_） / Complete app credentials and allowed chat/user IDs')
+    !/^ou_[a-zA-Z0-9_-]+$/.test(settings.allowedUserId))) {
+    throw new Error('请填写应用凭据和允许的用户 Open ID（ou_） / Complete app credentials and allowed user ID')
+  }
+  if (settings.receiveEnabled && settings.receiveMode === 'group' && !/^oc_[a-zA-Z0-9_-]+$/.test(settings.allowedChatId)) {
+    throw new Error('请填写允许的群 ID（oc_） / Complete the allowed group ID')
   }
   if (settings.webhook) {
     // 只接受飞书官方群机器人地址，避免把通知和签名发送到其他服务。
     if (!/^https:\/\/open\.feishu\.cn\/open-apis\/bot\/v2\/hook\/[a-zA-Z0-9-]+$/.test(settings.webhook)) {
       throw new Error('请填写完整的飞书群机器人 Webhook 地址 / Invalid Feishu webhook URL')
     }
-  } else if (settings.enabled) {
+  } else if (settings.enabled && !settings.receiveEnabled) {
     throw new Error('开启飞书通知前请填写 Webhook 地址 / A webhook URL is required')
   }
   if (/[\r\n]/.test(settings.secret)) {
@@ -79,6 +89,7 @@ function requireEncryption(): void {
 
 export class FeishuNotifier {
   private settings: FeishuSettings = { ...DEFAULT_FEISHU_SETTINGS }
+  private recentSessions: ProjectSessionSelection[] = []
   private status: FeishuStatus = { ...DEFAULT_FEISHU_STATUS }
   private writes: Promise<void> = Promise.resolve()
   private sends: Promise<void> = Promise.resolve()
@@ -86,6 +97,7 @@ export class FeishuNotifier {
   private revision = 0
   private stopped = false
   private controller?: AbortController
+  private appClient?: Client
 
   constructor(private file: string, private onStatus: (status: FeishuStatus) => void) {}
 
@@ -93,7 +105,17 @@ export class FeishuNotifier {
     try {
       const encrypted = await fs.readFile(this.file)
       requireEncryption()
-      this.settings = validateSettings(JSON.parse(safeStorage.decryptString(encrypted)))
+      const saved = JSON.parse(safeStorage.decryptString(encrypted))
+      this.settings = validateSettings(saved)
+      if (Array.isArray(saved.recentSessions)) {
+        this.recentSessions = saved.recentSessions.filter((entry: unknown): entry is ProjectSessionSelection => {
+          if (!entry || typeof entry !== 'object') return false
+          const { scope, cwd, threadId } = entry as Partial<ProjectSessionSelection>
+          return typeof scope === 'string' && scope.length > 0 && scope.length <= 600 &&
+            typeof cwd === 'string' && cwd.length > 0 && cwd.length <= 4096 &&
+            typeof threadId === 'string' && threadId.length > 0 && threadId.length <= 256
+        }).slice(-1000)
+      }
       this.setStatus('idle')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -104,6 +126,28 @@ export class FeishuNotifier {
 
   getSettings(): FeishuSettings {
     return { ...this.settings }
+  }
+
+  getRecentSessions(): ProjectSessionSelection[] {
+    return this.recentSessions.map((selection) => ({ ...selection }))
+  }
+
+  async rememberSession(selection: ProjectSessionSelection, expected: FeishuSettings, active: () => boolean): Promise<void> {
+    const write = this.writes.then(async () => {
+      const current = this.settings
+      if (!active() || !current.receiveEnabled || current.appId !== expected.appId ||
+        current.appSecret !== expected.appSecret || current.allowedUserId !== expected.allowedUserId ||
+        current.receiveMode !== expected.receiveMode || current.allowedChatId !== expected.allowedChatId)
+        throw new Error('接收配置已变化，最近会话未保存。')
+      const recentSessions = [
+        ...this.recentSessions.filter((entry) => entry.scope !== selection.scope || entry.cwd !== selection.cwd),
+        { ...selection }
+      ].slice(-1000)
+      await this.writeSettings(current, recentSessions)
+      this.recentSessions = recentSessions
+    })
+    this.writes = write.catch(() => {})
+    await write
   }
 
   getStatus(): FeishuStatus {
@@ -120,6 +164,7 @@ export class FeishuNotifier {
       const current = this.settings
       if (!active() || !current.executionEnabled || !current.receiveEnabled ||
         current.appId !== expected.appId || current.appSecret !== expected.appSecret ||
+        current.receiveMode !== expected.receiveMode ||
         current.allowedChatId !== expected.allowedChatId || current.allowedUserId !== expected.allowedUserId)
         throw new Error('消息接收配置已变化，请重新打开会话权限卡片。')
       return validateSettings({ ...current, executionThreads: [
@@ -131,22 +176,31 @@ export class FeishuNotifier {
   private async persist(getSettings: () => FeishuSettings): Promise<FeishuSettings> {
     const write = this.writes.then(async () => {
       const settings = getSettings()
-      requireEncryption()
-      try {
-        const encrypted = safeStorage.encryptString(JSON.stringify(settings))
-        await fs.mkdir(dirname(this.file), { recursive: true })
-        await fs.writeFile(`${this.file}.tmp`, encrypted, { mode: 0o600 })
-        await fs.rename(`${this.file}.tmp`, this.file)
-      } catch {
-        throw new Error('飞书配置加密或保存失败 / Could not encrypt or save Feishu settings')
-      }
+      const recentSessions = settings.appId === this.settings.appId && settings.allowedUserId === this.settings.allowedUserId
+        ? this.recentSessions : []
+      await this.writeSettings(settings, recentSessions)
+      if (settings.appId !== this.settings.appId || settings.appSecret !== this.settings.appSecret)
+        this.appClient = undefined
       this.settings = settings
+      this.recentSessions = recentSessions
       this.revision += 1
       this.setStatus('idle')
     })
     this.writes = write.catch(() => {})
     await write
     return this.getSettings()
+  }
+
+  private async writeSettings(settings: FeishuSettings, recentSessions: ProjectSessionSelection[]): Promise<void> {
+    requireEncryption()
+    try {
+      const encrypted = safeStorage.encryptString(JSON.stringify({ ...settings, recentSessions }))
+      await fs.mkdir(dirname(this.file), { recursive: true })
+      await fs.writeFile(`${this.file}.tmp`, encrypted, { mode: 0o600 })
+      await fs.rename(`${this.file}.tmp`, this.file)
+    } catch {
+      throw new Error('飞书配置加密或保存失败 / Could not encrypt or save Feishu settings')
+    }
   }
 
   send(getContent: () => { title: string; body: string } | undefined, test = false): Promise<void> {
@@ -207,12 +261,41 @@ export class FeishuNotifier {
   }
 
   private async post(content: { title: string; body: string }): Promise<void> {
+    const text = `Codex Status\n${content.title}\n${content.body}`.trim()
+    const privateChat = this.settings.receiveEnabled && this.settings.receiveMode === 'p2p'
+    const message = this.settings.mentionAll && !privateChat ? `${text}\n<at user_id="all">所有人</at>` : text
+    if (this.settings.receiveEnabled) {
+      // 协作与任务提醒共用应用机器人；发送失败也不回退 Webhook，避免重复通知。
+      const client = (this.appClient ??= new Client({
+        appId: this.settings.appId,
+        appSecret: this.settings.appSecret,
+        // SDK 异常可能包含凭据，禁止输出原始请求日志。
+        logger: { error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
+      }))
+      try {
+        const result = await client.request<{ code: number; data?: { message_id?: string } }>({
+          url: `/open-apis/im/v1/messages?receive_id_type=${privateChat ? 'open_id' : 'chat_id'}`,
+          method: 'POST',
+          timeout: 10000,
+          data: {
+            receive_id: privateChat ? this.settings.allowedUserId : this.settings.allowedChatId,
+            msg_type: 'text',
+            content: JSON.stringify({ text: message })
+          }
+        })
+        if (result.code !== 0 || !result.data?.message_id)
+          throw new FeishuRequestError('协作机器人未确认通知送达，请检查发送消息权限和接收目标 / Notification delivery was not confirmed')
+      } catch (error) {
+        if (error instanceof FeishuRequestError) throw error
+        throw new FeishuRequestError('协作机器人推送失败，请检查网络及应用配置 / Collaboration bot notification failed')
+      }
+      return
+    }
     if (!this.settings.webhook) throw new FeishuRequestError('请先保存 Webhook 地址 / Save a webhook URL first')
     const timestamp = Math.floor(Date.now() / 1000).toString()
-    const text = `Codex Status\n${content.title}\n${content.body}`.trim()
     const body = {
       msg_type: 'text',
-      content: { text: this.settings.mentionAll ? `${text}\n<at user_id="all">所有人</at>` : text },
+      content: { text: message },
       ...(this.settings.secret ? {
         timestamp,
         sign: createHmac('sha256', `${timestamp}\n${this.settings.secret}`).update('').digest('base64')

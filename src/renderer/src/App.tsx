@@ -198,6 +198,7 @@ function App(): React.JSX.Element {
   const [feishuLoaded, setFeishuLoaded] = useState(false)
   const [feishuBusy, setFeishuBusy] = useState<'save' | 'test' | undefined>()
   const [feishuIssue, setFeishuIssue] = useState('')
+  const feishuIssueRef = useRef<HTMLParagraphElement>(null)
   const capsulePointerRef = useRef<CapsulePointerState | null>(null)
   const dragFrameRef = useRef<number | undefined>(undefined)
   const pendingDragRef = useRef<CapsuleDragMovePayload | undefined>(undefined)
@@ -316,6 +317,12 @@ function App(): React.JSX.Element {
     })
     return () => { active = false }
   }, [ready, windowRole, panelView])
+
+  useEffect(() => {
+    if (panelView === 'settings' && feishuIssue &&
+      (settingsCategory === 'feishu' || settingsCategory === 'receiver'))
+      feishuIssueRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [feishuIssue, panelView, settingsCategory])
 
   useEffect(() => {
     const updateClock = (): void => {
@@ -910,7 +917,7 @@ function App(): React.JSX.Element {
                 ['appearance', settings.locale === 'en-US' ? 'Appearance' : '外观'],
                 ['tasks', settings.locale === 'en-US' ? 'Tasks' : '任务通知'],
                 ['feishu', settings.locale === 'en-US' ? 'Feishu' : '飞书通知'],
-                ['receiver', settings.locale === 'en-US' ? 'Receive' : '消息接收']
+                ['receiver', settings.locale === 'en-US' ? 'Feishu bot' : '机器人协作']
               ] as const).map(([category, label]) => <button key={category} type="button"
                 aria-pressed={settingsCategory === category} aria-controls="settings-content"
                 onClick={() => setSettingsCategory(category)}>{label}
@@ -926,6 +933,9 @@ function App(): React.JSX.Element {
                 <p className="settings-error" role="alert">
                   {copy.saveError}
                 </p>
+              ) : null}
+              {(settingsCategory === 'feishu' || settingsCategory === 'receiver') && feishuIssue ? (
+                <p className="settings-error" role="alert" ref={feishuIssueRef}>{feishuIssue}</p>
               ) : null}
 
               <div className="settings-list">
@@ -946,6 +956,16 @@ function App(): React.JSX.Element {
                   <p className="settings-section__title">{settings.locale === 'en-US' ? 'Feishu mobile notifications' : '飞书手机通知'}</p>
                   <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
                     aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Feishu settings' : '飞书配置'}>
+                    <div className="feishu-actions">
+                      <button className="ghost-button" type="button" onClick={() => setSettingsCategory('receiver')}>
+                        {feishuSettings.receiveEnabled
+                          ? (settings.locale === 'en-US' ? 'Manage collaboration bot' : '管理协作机器人')
+                          : (settings.locale === 'en-US' ? 'Set up collaboration bot' : '配置协作机器人')}
+                      </button>
+                    </div>
+                    {!feishuSettings.receiveEnabled ? <p className="task-help">{settings.locale === 'en-US'
+                      ? 'Use the collaboration bot for private notifications and tasks. For group notifications only, use the Webhook below.'
+                      : '私聊通知和任务协作请配置应用机器人；仅需群通知时可使用下方 Webhook。'}</p> : null}
                     <div className="setting-row">
                       <span>{settings.locale === 'en-US' ? 'Notify when turns end' : '轮次结束时推送'}</span>
                       <ToggleSwitch checked={feishuSettings.enabled}
@@ -953,45 +973,58 @@ function App(): React.JSX.Element {
                         offLabel={copy.disabled} onLabel={copy.enabled}
                         onChange={(enabled) => setFeishuSettings({ ...feishuSettings, enabled })} />
                     </div>
-                    <div className="setting-row">
-                      <span>{settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}</span>
-                      <ToggleSwitch checked={feishuSettings.mentionAll}
-                        label={settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}
-                        offLabel={copy.disabled} onLabel={copy.enabled}
-                        onChange={(mentionAll) => setFeishuSettings({ ...feishuSettings, mentionAll })} />
-                    </div>
-                    <p className="task-help">{settings.locale === 'en-US'
-                      ? 'For a personal notification group, enable this to mention yourself without a user ID. The group must allow the bot to mention everyone. Test notifications also mention everyone.'
-                      : '个人通知群可开启，无需填写用户 ID；群内需允许机器人 @所有人，测试通知也会 @所有人。'}</p>
-                    <label className="feishu-field">
-                      <span>{settings.locale === 'en-US' ? 'Webhook URL' : 'Webhook 地址'}</span>
-                      <span className="inline-input inline-input--secret">
-                        <input type="password" autoComplete="off" spellCheck={false} maxLength={512}
-                          placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"
-                          value={feishuSettings.webhook}
-                          onChange={(event) => setFeishuSettings({ ...feishuSettings, webhook: event.target.value })} />
-                      </span>
-                    </label>
-                    <label className="feishu-field">
-                      <span>{settings.locale === 'en-US' ? 'Signing secret (optional)' : '签名密钥（可选）'}</span>
-                      <span className="inline-input inline-input--secret">
-                        <input type="password" autoComplete="new-password" spellCheck={false} maxLength={256}
-                          placeholder={settings.locale === 'en-US' ? 'Required if signature verification is enabled' : '机器人开启签名校验时必填'}
-                          value={feishuSettings.secret}
-                          onChange={(event) => setFeishuSettings({ ...feishuSettings, secret: event.target.value })} />
-                      </span>
-                    </label>
+                    {(!feishuSettings.receiveEnabled || feishuSettings.receiveMode !== 'p2p') && <>
+                      <div className="setting-row">
+                        <span>{settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}</span>
+                        <ToggleSwitch checked={feishuSettings.mentionAll}
+                          label={settings.locale === 'en-US' ? 'Mention everyone in notifications' : '通知时 @所有人'}
+                          offLabel={copy.disabled} onLabel={copy.enabled}
+                          onChange={(mentionAll) => setFeishuSettings({ ...feishuSettings, mentionAll })} />
+                      </div>
+                      <p className="task-help">{settings.locale === 'en-US'
+                        ? 'Notifications and test messages will mention everyone. Check that the group permits the bot to do so.'
+                        : '开启后通知和测试消息都会 @群内所有人；请先确认群允许机器人 @所有人。'}</p>
+                    </>}
+                    {feishuSettings.receiveEnabled ? <p className="task-help">{settings.locale === 'en-US'
+                      ? feishuSettings.receiveMode === 'p2p'
+                        ? 'Notifications go to your private chat with the collaboration bot.'
+                        : 'Notifications use the collaboration bot.'
+                      : feishuSettings.receiveMode === 'p2p'
+                        ? '通知发送到与协作机器人的私聊。'
+                        : '通知统一由协作机器人发送。'}</p> : <>
+                      <label className="feishu-field">
+                        <span>{settings.locale === 'en-US' ? 'Webhook URL' : 'Webhook 地址'}</span>
+                        <span className="inline-input inline-input--secret">
+                          <input type="password" autoComplete="off" spellCheck={false} maxLength={512}
+                            placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"
+                            value={feishuSettings.webhook}
+                            onChange={(event) => setFeishuSettings({ ...feishuSettings, webhook: event.target.value })} />
+                        </span>
+                      </label>
+                      <label className="feishu-field">
+                        <span>{settings.locale === 'en-US' ? 'Signing secret (optional)' : '签名密钥（可选）'}</span>
+                        <span className="inline-input inline-input--secret">
+                          <input type="password" autoComplete="new-password" spellCheck={false} maxLength={256}
+                            placeholder={settings.locale === 'en-US' ? 'Required if signature verification is enabled' : '机器人开启签名校验时必填'}
+                            value={feishuSettings.secret}
+                            onChange={(event) => setFeishuSettings({ ...feishuSettings, secret: event.target.value })} />
+                        </span>
+                      </label>
+                    </>}
                     <div className="feishu-actions">
-                      <button className="ghost-button" type="button" disabled={feishuDirty || !savedFeishuSettings.webhook}
+                      <button className="ghost-button" type="button" disabled={feishuDirty || (!savedFeishuSettings.receiveEnabled && !savedFeishuSettings.webhook)}
                         onClick={() => { void testFeishuNotification() }}>
                         {feishuBusy === 'test' ? (settings.locale === 'en-US' ? 'Sending…' : '发送中…')
                           : (settings.locale === 'en-US' ? 'Send test notification' : '发送测试通知')}
                       </button>
                     </div>
+                    {feishuDirty ? <p className="task-help">{settings.locale === 'en-US'
+                      ? 'Save before testing. The result below is for the saved configuration.'
+                      : '请先保存配置再测试；下方发送结果对应已保存配置。'}</p> : null}
                   </fieldset>
                   <p className="task-help">{settings.locale === 'en-US'
-                    ? 'Credentials are encrypted on this computer. Enabling sends titles and request summaries to your Feishu group. Keep Codex Status running and task monitoring on; the desktop Feishu app need not be signed in.'
-                    : '地址与密钥加密保存在本机；开启后会将标题和需求摘要发送到指定飞书群。需保持本应用运行并开启任务监视，电脑飞书无需登录。'}</p>
+                    ? 'Credentials are encrypted on this computer. Completion notifications include the request and final answer, with previews for long answers. Keep Codex Status running and task monitoring on; the desktop Feishu app need not be signed in.'
+                    : '配置加密保存在本机；结束通知包含本轮需求和最终回答，长回答显示预览。需保持本应用运行并开启任务监视，电脑飞书无需登录。'}</p>
                   {feishuStatus.enabled && !settings.taskMonitoring ? <p className="settings-error" role="status">
                     {settings.locale === 'en-US' ? 'Task monitoring is paused; automatic notifications are paused too.' : '任务监视已关闭，自动推送也已暂停。'}
                   </p> : null}
@@ -1002,14 +1035,24 @@ function App(): React.JSX.Element {
                       : (settings.locale === 'en-US' ? 'No notifications sent with this configuration yet.' : '当前配置尚未发送通知。')}
                     {feishuStatus.updatedAt ? ` · ${new Date(feishuStatus.updatedAt).toLocaleTimeString(settings.locale)}` : ''}
                   </p>
-                  {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
                 </div>
                 <div className="settings-section" hidden={settingsCategory !== 'receiver'}>
                   <fieldset className="feishu-fields" disabled={!feishuLoaded || Boolean(feishuBusy)}
-                    aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Message reception settings' : '消息接收设置'}>
-                    <FeishuReceiverSettings settings={feishuSettings} tasks={tasks.tasks} onChange={setFeishuSettings} english={settings.locale === 'en-US'} />
+                    aria-busy={Boolean(feishuBusy)} aria-label={settings.locale === 'en-US' ? 'Collaboration bot settings' : '协作机器人设置'}>
+                    {feishuLoaded ? <FeishuReceiverSettings
+                      settings={feishuSettings}
+                      savedSettings={savedFeishuSettings}
+                      settingsDirty={feishuDirty}
+                      tasks={tasks.tasks}
+                      monitoring={tasks.monitoring}
+                      monitorIssue={tasks.issue}
+                      onChange={setFeishuSettings}
+                      onOpenTaskSettings={() => setSettingsCategory('tasks')}
+                      english={settings.locale === 'en-US'}
+                    /> : <p className="task-help" role="status">{feishuIssue
+                      ? (settings.locale === 'en-US' ? 'Could not load settings.' : '加载失败')
+                      : (settings.locale === 'en-US' ? 'Loading bot settings…' : '正在读取机器人配置…')}</p>}
                   </fieldset>
-                  {feishuIssue ? <p className="settings-error" role="alert">{feishuIssue}</p> : null}
                 </div>
                 <div className="settings-section" hidden={settingsCategory !== 'general'}>
                   <p className="settings-section__title">{copy.groupRefresh}</p>
@@ -1185,12 +1228,17 @@ function App(): React.JSX.Element {
                 <ChevronLeftIcon />
                 <span>{copy.back}</span>
               </button>
+              {(settingsCategory === 'feishu' || settingsCategory === 'receiver') && savedFeishuSettings.receiveEnabled && feishuDirty ? <p className="task-help settings-save-hint">{settings.locale === 'en-US'
+                ? 'Saving reconnects the bot. Finish running Feishu tasks first.'
+                : '保存会重连机器人，请先结束正在进行的飞书任务。'}</p> : null}
               {settingsCategory === 'feishu' || settingsCategory === 'receiver' ? <button
                 className="ghost-button ghost-button--accent" type="button"
                 disabled={!feishuLoaded || Boolean(feishuBusy) || !feishuDirty}
                 onClick={() => { void saveFeishuSettings() }}>
                 {feishuBusy === 'save' ? (settings.locale === 'en-US' ? 'Saving…' : '保存中…')
-                  : feishuDirty ? (settings.locale === 'en-US' ? 'Save settings' : '保存配置')
+                  : feishuDirty ? (settingsCategory === 'receiver' && feishuSettings.receiveEnabled
+                    ? (settings.locale === 'en-US' ? 'Save & connect' : '保存并连接')
+                    : (settings.locale === 'en-US' ? 'Save settings' : '保存配置'))
                   : (settings.locale === 'en-US' ? 'Saved' : '已保存')}
               </button> : <button
                 className="ghost-button ghost-button--accent"
