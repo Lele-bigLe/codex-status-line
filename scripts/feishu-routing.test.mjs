@@ -307,6 +307,7 @@ test('execution bridge keeps commands local, previews long answers and routes qu
   const sessionUrl = `data:text/javascript;base64,${Buffer.from(
     `
     export const state = { starts: [], answers: [], answerThreads: [] };
+    export class CodexSessionBusyError extends Error {}
     export class CodexSession {
       running = false; awaitingInput = false;
       constructor(executable, onIssue, options) { this.permission = options?.permission; }

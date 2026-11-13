@@ -55,7 +55,7 @@ test('resumes exact thread read-only, forwards only visible assistant replies, a
   const session = new CodexSession(process.execPath, () => {})
   await assert.rejects(
     session.start({ ...task, status: 'running' }, 'hello', async () => {}),
-    /其他窗口/
+    /电脑端使用/
   )
   await session.start(task, 'hello', async (item) => {
     output.push(item)

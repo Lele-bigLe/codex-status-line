@@ -9,8 +9,13 @@ import type {
   CodexSessionConfiguration
 } from '../../shared/feishu'
 import type { TasksSnapshot, TaskRecord } from '../../shared/tasks'
-import { FeishuRouter, type ProjectSessionSelection, type RouteAction, type RouteReply } from './feishu-routing'
-import { CodexSession } from './codex-session'
+import {
+  FeishuRouter,
+  type ProjectSessionSelection,
+  type RouteAction,
+  type RouteReply
+} from './feishu-routing'
+import { CodexSession, CodexSessionBusyError } from './codex-session'
 
 // SDK 的异常可能包含带凭据的请求对象，统一使用脱敏状态反馈。
 const logger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
@@ -53,8 +58,10 @@ function answerView(reply: RouteReply, page = -1): { reply: RouteReply; page: nu
   const choices: NonNullable<RouteReply['choices']> = []
   if (reply.navigation === true) {
     if (expanded) {
-      if (current > 0) choices.push({ label: '上一页', action: { kind: 'answer-view', page: current - 1 } })
-      if (current + 1 < pages) choices.push({ label: '下一页', action: { kind: 'answer-view', page: current + 1 } })
+      if (current > 0)
+        choices.push({ label: '上一页', action: { kind: 'answer-view', page: current - 1 } })
+      if (current + 1 < pages)
+        choices.push({ label: '下一页', action: { kind: 'answer-view', page: current + 1 } })
       choices.push({ label: '收起', action: { kind: 'answer-view', page: -1 } })
     } else choices.push({ label: '展开全文', action: { kind: 'answer-view', page: 0 } })
   }
@@ -66,7 +73,10 @@ function answerView(reply: RouteReply, page = -1): { reply: RouteReply; page: nu
         ? characters.slice(current * ANSWER_PAGE_SIZE, (current + 1) * ANSWER_PAGE_SIZE).join('')
         : `${characters.slice(0, 240).join('').split('\n').slice(0, 8).join('\n').trimEnd()}\n…`,
       choices: [...(reply.choices ?? []), ...choices],
-      note: expanded && pages > 1 ? [reply.note, `第 ${current + 1}/${pages} 页`].filter(Boolean).join(' · ') : reply.note
+      note:
+        expanded && pages > 1
+          ? [reply.note, `第 ${current + 1}/${pages} 页`].filter(Boolean).join(' · ')
+          : reply.note
     }
   }
 }
@@ -92,39 +102,56 @@ function selectionCard(reply: RouteReply): {
     if (target) {
       if (reply.view === 'turn' || reply.view === 'details')
         navigation.push(button('继续此会话', { kind: 'session', value: target.threadId }, true))
-      else
-        navigation.push(button('详情', { kind: 'details', value: target.threadId }))
+      else navigation.push(button('详情', { kind: 'details', value: target.threadId }))
       navigation.push(button('切换', { kind: 'projects' }))
     } else {
       navigation.push(button('选择会话', { kind: 'projects' }))
     }
   }
-  const selects = (reply.selects ?? []).filter((select) => select.options.length).map((select) => {
-    let initial: string | undefined
-    const options = select.options.map((option) => {
-      const id = randomUUID()
-      actions.set(id, { kind: select.kind, value: option.value })
-      if (option.value === select.selected) initial = id
-      return { text: { tag: 'plain_text', content: option.label }, value: id }
+  const selects = (reply.selects ?? [])
+    .filter((select) => select.options.length)
+    .map((select) => {
+      let initial: string | undefined
+      const options = select.options.map((option) => {
+        const id = randomUUID()
+        actions.set(id, { kind: select.kind, value: option.value })
+        if (option.value === select.selected) initial = id
+        return { text: { tag: 'plain_text', content: option.label }, value: id }
+      })
+      return {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'select_static',
+            placeholder: {
+              tag: 'plain_text',
+              content: select.kind === 'project' ? '选择项目' : '选择会话'
+            },
+            width: 'fill',
+            options,
+            ...(initial ? { initial_option: initial } : {})
+          }
+        ]
+      }
     })
-    return {
-      tag: 'action',
-      actions: [{
-        tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: select.kind === 'project' ? '选择项目' : '选择会话' },
-        width: 'fill',
-        options,
-        ...(initial ? { initial_option: initial } : {})
-      }]
-    }
-  })
   const name = target?.title || (target ? `会话 ${target.threadId.slice(-8)}` : '')
-  const targetName = Array.from(name).length > 32 ? `${Array.from(name).slice(0, 32).join('')}…` : name
-  const title = reply.view === 'switcher' ? '切换会话' : target
-    ? `${basename(target.cwd) || target.cwd} · ${targetName}${reply.title && reply.title !== name ? ` · ${reply.title}` : ''}`
-    : reply.title || 'Codex 会话选择'
-  const sessionInfo = reply.view === 'switcher' ? '' : [reply.sessionInfo, target && reply.view !== 'details' ? target.threadId.slice(-8) : undefined]
-    .filter(Boolean).join(' · ')
+  const targetName =
+    Array.from(name).length > 32 ? `${Array.from(name).slice(0, 32).join('')}…` : name
+  const title =
+    reply.view === 'switcher'
+      ? '切换会话'
+      : target
+        ? `${basename(target.cwd) || target.cwd} · ${targetName}${reply.title && reply.title !== name ? ` · ${reply.title}` : ''}`
+        : reply.title || 'Codex 会话选择'
+  const sessionInfo =
+    reply.view === 'switcher'
+      ? ''
+      : [
+          reply.sessionInfo,
+          target && reply.view !== 'details' ? target.threadId.slice(-8) : undefined
+        ]
+          .filter(Boolean)
+          .join(' · ')
   const content = reply.cardText ?? reply.text
   return {
     actions,
@@ -173,6 +200,11 @@ export class FeishuReceiver {
   private codex = new Map<string, CodexSession>()
   private dialogueTurns = new Set<string>()
   private creating = new Map<string, CodexSession>()
+  private checkWaiting?: () => void
+
+  onTasksChanged(): void {
+    this.checkWaiting?.()
+  }
 
   handlesTurn(threadId: string, turnId?: string): boolean {
     return Boolean(turnId && this.dialogueTurns.has(`${threadId}:${turnId}`))
@@ -189,8 +221,13 @@ export class FeishuReceiver {
     private registerSession?: (task: TaskRecord) => Promise<void>,
     private sessionMemory?: {
       load: () => ProjectSessionSelection[]
-      save: (selection: ProjectSessionSelection, settings: FeishuSettings, active: () => boolean) => Promise<void>
-    }
+      save: (
+        selection: ProjectSessionSelection,
+        settings: FeishuSettings,
+        active: () => boolean
+      ) => Promise<void>
+    },
+    private prepareFork?: (sourceId: string) => () => Promise<void>
   ) {}
 
   getStatus(): FeishuReceiverStatus {
@@ -209,6 +246,7 @@ export class FeishuReceiver {
 
   stop(): void {
     this.generation += 1
+    this.checkWaiting = undefined
     clearInterval(this.connectionTimer)
     this.connectionTimer = undefined
     for (const session of this.codex.values()) session.stop()
@@ -257,9 +295,11 @@ export class FeishuReceiver {
       {
         selections: this.sessionMemory?.load() ?? [],
         remember: (selection) => {
-          void this.sessionMemory?.save(selection, settings, active).catch(() =>
-            update({ issue: '会话已切换，但最近会话保存失败，重启后可能需要重新选择。' })
-          )
+          void this.sessionMemory
+            ?.save(selection, settings, active)
+            .catch(() =>
+              update({ issue: '会话已切换，但最近会话保存失败，重启后可能需要重新选择。' })
+            )
         }
       }
     )
@@ -324,7 +364,7 @@ export class FeishuReceiver {
         promptId: reply.promptId,
         questionId: reply.questionId,
         view: reply.view,
-        reply: reply.view === 'turn' ? reply : undefined,
+        reply: reply.view === 'turn' || reply.view === 'busy' ? reply : undefined,
         page,
         updatedAt: Date.now()
       })
@@ -347,7 +387,9 @@ export class FeishuReceiver {
         if (!active()) throw new Error('接收连接已关闭。')
         const index = offset / ANSWER_PAGE_SIZE
         const messageId = messageIds[index]
-        const presentation = turn ? answerView(reply, messageId ? menus.get(messageId)?.page : undefined) : undefined
+        const presentation = turn
+          ? answerView(reply, messageId ? menus.get(messageId)?.page : undefined)
+          : undefined
         const last = offset + ANSWER_PAGE_SIZE >= text.length
         const part = presentation?.reply ?? {
           ...reply,
@@ -382,6 +424,254 @@ export class FeishuReceiver {
         })
       }
     }
+    type WaitingRequest = {
+      id: string
+      scope: string
+      target: TaskRecord
+      prompt: string
+      messageId: string
+      state: 'confirming' | 'waiting' | 'starting'
+      retryAfter?: string
+    }
+    const waiting = new Map<string, WaitingRequest>()
+    const taskVersion = (task: TaskRecord): string => `${task.id}:${task.status}:${task.updatedAt}`
+    const currentTarget = (target: TaskRecord): TaskRecord => {
+      const snapshot = this.snapshot()
+      if (!snapshot.monitoring) throw new Error('任务监视已暂停，请重新开启后发送需求。')
+      const current = snapshot.tasks.find(
+        (task) => task.threadId === target.threadId && task.cwd === target.cwd
+      )
+      if (!current) throw new Error('原会话已不可见，请重新选择会话。')
+      return current
+    }
+    const busyReply = (target: TaskRecord, prompt: string): RouteReply => ({
+      target,
+      prompt,
+      view: 'busy',
+      navigation: false,
+      text: `电脑端正在使用此会话，本条需求尚未执行。\n\n需求：${Array.from(prompt).slice(0, 160).join('')}${Array.from(prompt).length > 160 ? '…' : ''}`,
+      choices: [
+        { label: '本轮结束后继续', action: { kind: 'busy-wait' } },
+        { label: '从上一轮分叉', action: { kind: 'busy-fork' } }
+      ],
+      note: '等待沿用原会话；分叉从最近已完成轮次创建新会话，以只读权限执行这条需求。项目文件仍共用。'
+    })
+    const waitingReply = (request: WaitingRequest): RouteReply => ({
+      target: request.target,
+      view: 'busy',
+      navigation: false,
+      text: '已保留本条需求，等待电脑端本轮结束后在原会话继续。切换项目或会话不会改变执行目标。',
+      choices: [{ label: '取消等待', action: { kind: 'cancel-wait', requestId: request.id } }],
+      note: '状态未知时不会执行。重启应用或重新保存机器人配置会取消等待。'
+    })
+    const enqueue = (key: string, action: () => Promise<void>): void => {
+      const pending = (queues.get(key) ?? Promise.resolve())
+        .then(async () => {
+          if (active()) await action()
+        })
+        .catch(() =>
+          update({
+            phase: 'failed',
+            issue: '回执未确认送达，请查看原卡片和电脑端状态，勿重复提交。'
+          })
+        )
+        .finally(() => {
+          if (queues.get(key) === pending) queues.delete(key)
+        })
+      queues.set(key, pending)
+    }
+    const executePrompt = async (
+      scope: string,
+      parentId: string,
+      target: TaskRecord,
+      prompt: string,
+      turnMessages: string[] = [],
+      quoted?: { view?: RouteReply['view']; promptId?: string; questionId?: string },
+      quotedId?: string,
+      waitingRequest?: WaitingRequest
+    ): Promise<void> => {
+      const title = target.title || `会话 ${target.threadId.slice(-8)}`
+      let checkedTarget = target
+      let answerText = ''
+      let progress = ''
+      let choices: RouteReply['choices']
+      try {
+        const codex = sessionFor(target.threadId)
+        if (quoted?.view === 'approval') throw new Error('审批请使用对应卡片上的允许或拒绝按钮。')
+        if (quoted?.view === 'question' || codex.awaitingInput) {
+          if (quoted?.view === 'question' && !quoted.promptId)
+            throw new Error('这个问题已结束，请查看最新的问题卡片。')
+          if (quotedId && quoted?.view !== 'question')
+            throw new Error('会话正在等待回答，请回复对应的问题卡片。')
+          const answer = codex.answer(prompt, quoted?.promptId, quoted?.questionId)
+          await sendReply(
+            scope,
+            quotedId ?? parentId,
+            {
+              text: answer,
+              target,
+              title,
+              navigation: false,
+              view: 'question',
+              promptId: quoted?.promptId,
+              questionId: quoted?.questionId
+            },
+            quotedId ? [quotedId] : []
+          )
+        } else {
+          if (codex.running)
+            throw new Error('Codex 正在处理，请等待本轮结束；需要中断时点击“停止本轮”。')
+          // 先确认飞书回执可送达，再启动真实执行。
+          await sendReply(
+            scope,
+            parentId,
+            {
+              text: `已收到，正在连接会话：${target.title || target.threadId}。`,
+              sessionInfo: configurationText(),
+              target,
+              title,
+              view: 'turn',
+              navigation: false
+            },
+            turnMessages
+          )
+          if (pendingPermissions.has(target.threadId))
+            throw new Error('此会话权限正在保存，请稍后再发送需求。')
+          checkedTarget = currentTarget(target)
+          await codex.start(
+            checkedTarget,
+            prompt,
+            async (output) => {
+              const sessionInfo = configurationText(output.configuration, true)
+              if (
+                output.promptId ||
+                output.choices?.some(
+                  (choice) => choice.action.kind === 'answer' || choice.action.kind === 'approve'
+                )
+              ) {
+                await sendReply(scope, parentId, {
+                  ...output,
+                  sessionInfo,
+                  target,
+                  title: output.promptId ? '待回答' : '待审批',
+                  view: output.promptId ? 'question' : 'approval',
+                  navigation: false
+                })
+                return
+              }
+              if (output.kind === 'answer' || !output.kind) {
+                answerText += `${answerText ? '\n\n' : ''}${output.text}`
+                progress = ''
+              } else if (output.kind === 'progress') {
+                const characters = Array.from(output.text)
+                progress = characters.slice(0, 600).join('') + (characters.length > 600 ? '…' : '')
+              } else if (output.kind === 'status') {
+                choices = output.choices
+              }
+              const completed = output.kind === 'completed'
+              const body = answerText || (completed ? '' : progress) || output.text
+              const note =
+                output.kind === 'answer' || output.kind === 'progress' ? '正在处理…' : output.text
+              await sendReply(
+                scope,
+                parentId,
+                {
+                  text: body,
+                  sessionInfo,
+                  note: note === body ? undefined : note,
+                  target,
+                  title,
+                  view: 'turn',
+                  choices: completed ? undefined : choices,
+                  navigation: completed
+                },
+                turnMessages
+              )
+              if (completed) this.checkWaiting?.()
+            },
+            () => {
+              checkedTarget = currentTarget(target)
+              return checkedTarget
+            }
+          )
+        }
+      } catch (error) {
+        if (error instanceof CodexSessionBusyError) {
+          if (waitingRequest) {
+            waitingRequest.state = 'waiting'
+            waitingRequest.retryAfter = taskVersion(checkedTarget)
+            await sendReply(scope, parentId, waitingReply(waitingRequest), turnMessages)
+          } else await sendReply(scope, parentId, busyReply(target, prompt), turnMessages)
+          return
+        }
+        await sendReply(
+          scope,
+          parentId,
+          {
+            text: answerText || (error instanceof Error ? error.message : 'Codex 请求未完成。'),
+            note: answerText && error instanceof Error ? error.message : undefined,
+            target,
+            title,
+            view: 'turn',
+            navigation: true
+          },
+          turnMessages
+        )
+      } finally {
+        if (
+          waitingRequest &&
+          waitingRequest.state !== 'waiting' &&
+          waiting.get(target.threadId) === waitingRequest
+        )
+          waiting.delete(target.threadId)
+      }
+    }
+    this.checkWaiting = (): void => {
+      for (const request of waiting.values()) {
+        if (request.state !== 'waiting') continue
+        let target: TaskRecord
+        try {
+          target = currentTarget(request.target)
+          if (!grants.has(target.threadId)) throw new Error('原会话的执行授权已撤销。')
+        } catch (error) {
+          waiting.delete(request.target.threadId)
+          void sendReply(
+            request.scope,
+            request.messageId,
+            {
+              target: request.target,
+              navigation: false,
+              view: 'busy',
+              text: `等待已取消：${error instanceof Error ? error.message : '会话不可用。'}`
+            },
+            [request.messageId]
+          ).catch(() => update({ phase: 'failed', issue: '等待已取消，但回执未确认送达。' }))
+          continue
+        }
+        if (
+          !['completed', 'interrupted', 'idle'].includes(target.status) ||
+          this.codex.get(target.threadId)?.running ||
+          pendingPermissions.has(target.threadId) ||
+          request.retryAfter === taskVersion(target)
+        )
+          continue
+        request.state = 'starting'
+        enqueue(`session:${target.threadId}`, async () => {
+          if (waiting.get(target.threadId) !== request) return
+          await executePrompt(
+            request.scope,
+            request.messageId,
+            request.target,
+            request.prompt,
+            [request.messageId],
+            undefined,
+            undefined,
+            request
+          )
+        })
+      }
+    }
+
     const createSession = async (
       scope: string,
       cwd: string,
@@ -465,6 +755,115 @@ export class FeishuReceiver {
         if (this.creating.get(createKey) === session) this.creating.delete(createKey)
       }
     }
+    const forkSession = async (
+      scope: string,
+      source: TaskRecord,
+      prompt: string,
+      messageId: string
+    ): Promise<void> => {
+      if (!this.registerSession || !this.authorizeSession || !settings.executionEnabled)
+        throw new Error('当前无法创建并授权分叉会话。')
+      currentTarget(source)
+      if (!grants.has(source.threadId)) throw new Error('原会话尚未授权执行。')
+      const key = `fork:${source.threadId}`
+      if (this.creating.has(key)) throw new Error('此会话正在分叉，请等待结果。')
+      const selectionVersion = router.selectionVersion(scope)
+      let created: TaskRecord | undefined
+      const session = new CodexSession(
+        settings.codexExecutable,
+        (issue) => update({ phase: 'failed', issue, target: created?.threadId }),
+        {
+          permission: 'read-only',
+          mentionRequired: groupChat,
+          onConfiguration,
+          onRuntime: (codexRuntime) => update({ codexRuntime }),
+          onTurn: (turnId) => {
+            if (created) {
+              this.dialogueTurns.add(`${created.threadId}:${turnId}`)
+              if (this.dialogueTurns.size > 1000)
+                this.dialogueTurns.delete(this.dialogueTurns.values().next().value!)
+            }
+          }
+        }
+      )
+      this.creating.set(key, session)
+      try {
+        await sendReply(
+          scope,
+          messageId,
+          {
+            target: source,
+            text: '正在从最近已完成轮次创建手机分支…',
+            navigation: false
+          },
+          [messageId]
+        )
+        if (!active()) return
+        currentTarget(source)
+        const finishFork = this.prepareFork?.(source.threadId)
+        try {
+          created = await session.fork(source)
+          if (active() && created) await this.registerSession(created)
+        } finally {
+          await finishFork?.()
+        }
+        if (!active()) return
+        if (!created) {
+          const reply = busyReply(source, prompt)
+          await sendReply(
+            scope,
+            messageId,
+            {
+              ...reply,
+              text: '此会话尚无已完成轮次，暂不能分叉。可以等待电脑端本轮结束后继续。',
+              choices: reply.choices?.filter((choice) => choice.action.kind === 'busy-wait')
+            },
+            [messageId]
+          )
+          return
+        }
+        const grant: ExecutionThread = { threadId: created.threadId, permission: 'read-only' }
+        await this.authorizeSession(grant, settings, () => {
+          const snapshot = this.snapshot()
+          return (
+            active() &&
+            snapshot.monitoring &&
+            grants.has(source.threadId) &&
+            snapshot.tasks.some(
+              (task) =>
+                task.threadId === created!.threadId &&
+                task.cwd === created!.cwd &&
+                ['idle', 'completed', 'interrupted'].includes(task.status)
+            )
+          )
+        })
+        if (!active()) return
+        grants.set(created.threadId, grant.permission)
+        router.setExecutionThreads(
+          [...grants].map(([threadId, permission]) => ({ threadId, permission }))
+        )
+        this.codex.set(created.threadId, session)
+        if (router.selectionVersion(scope) === selectionVersion)
+          router.act(scope, { kind: 'session', value: created.threadId })
+        await executePrompt(scope, messageId, created, prompt, [messageId])
+      } catch (error) {
+        if (!active()) return
+        await sendReply(
+          scope,
+          messageId,
+          {
+            target: created ?? source,
+            navigation: true,
+            text: `${created ? '手机分支已创建，请在详情核对权限及执行结果。' : '分叉未完成或结果未确认，请先查看会话列表，勿重复创建。'}\n${error instanceof Error ? error.message : '请在电脑端核对。'}`
+          },
+          [messageId]
+        )
+      } finally {
+        if (!created || this.codex.get(created.threadId) !== session) session.stop()
+        if (this.creating.get(key) === session) this.creating.delete(key)
+      }
+    }
+
     try {
       const identity = await client.request<{ code: number; bot?: { open_id?: string } }>({
         url: '/open-apis/bot/v3/info',
@@ -508,19 +907,110 @@ export class FeishuReceiver {
             if (callbackKey && callbacks.has(callbackKey)) return callbacks.get(callbackKey)
             const messageId = event.context?.open_message_id
             const menu = messageId ? menus.get(messageId) : undefined
-            const actionId = event.action?.tag === 'select_static' || event.action?.option !== undefined
-              ? event.action.option : event.action?.value?.actionId
+            const actionId =
+              event.action?.tag === 'select_static' || event.action?.option !== undefined
+                ? event.action.option
+                : event.action?.value?.actionId
             const action =
               menu?.scope === scope && typeof actionId === 'string'
                 ? menu.actions.get(actionId)
                 : undefined
             if (!messageId || !action) {
               return {
-                toast: { type: 'warning', content: `该菜单已过期，请重新${mention}发送“项目列表”。` }
+                toast: {
+                  type: 'warning',
+                  content: `该菜单已过期，请重新${mention}发送“项目列表”。`
+                }
               }
             }
             let reply: RouteReply
             try {
+              if (action.kind === 'busy-wait' || action.kind === 'busy-fork') {
+                const request = menu?.view === 'busy' ? menu.reply : undefined
+                if (!request?.target || !request.prompt || !grants.has(request.target.threadId))
+                  throw new Error('此需求已过期或会话未授权，请重新发送。')
+                currentTarget(request.target)
+                if (action.kind === 'busy-wait') {
+                  if (waiting.has(request.target.threadId))
+                    throw new Error('此会话已有等待请求，请先取消原请求或等待其执行。')
+                  const pending: WaitingRequest = {
+                    id: randomUUID(),
+                    scope,
+                    target: request.target,
+                    prompt: request.prompt,
+                    messageId,
+                    state: 'confirming'
+                  }
+                  waiting.set(request.target.threadId, pending)
+                  menu!.actions.clear()
+                  void sendReply(scope, messageId, waitingReply(pending), [messageId])
+                    .then(() => {
+                      if (!active() || waiting.get(pending.target.threadId) !== pending) return
+                      pending.state = 'waiting'
+                      this.checkWaiting?.()
+                    })
+                    .catch(() => {
+                      if (waiting.get(pending.target.threadId) === pending)
+                        waiting.delete(pending.target.threadId)
+                      update({ phase: 'failed', issue: '等待回执未确认送达，本条需求未开始执行。' })
+                    })
+                } else {
+                  if (!this.registerSession || !this.authorizeSession)
+                    throw new Error('当前未启用会话创建与授权。')
+                  if (this.creating.has(`fork:${request.target.threadId}`))
+                    throw new Error('此会话正在分叉，请等待结果。')
+                  menu!.actions.clear()
+                  void forkSession(scope, request.target, request.prompt, messageId).catch(() =>
+                    update({
+                      phase: 'failed',
+                      issue: '分叉回执未确认送达，请核对会话列表，勿重复创建。'
+                    })
+                  )
+                }
+                const response = {
+                  toast: {
+                    type: 'info',
+                    content: action.kind === 'busy-wait' ? '正在确认等待请求…' : '正在创建手机分支…'
+                  }
+                }
+                if (callbackKey) {
+                  callbacks.set(callbackKey, response)
+                  if (callbacks.size > 128) callbacks.delete(callbacks.keys().next().value!)
+                }
+                return response
+              }
+              if (action.kind === 'cancel-wait') {
+                const request = menu?.target ? waiting.get(menu.target.threadId) : undefined
+                if (
+                  !request ||
+                  request.id !== action.requestId ||
+                  request.scope !== scope ||
+                  request.messageId !== messageId ||
+                  request.state !== 'waiting'
+                )
+                  throw new Error('等待已结束或任务已开始，请查看最新卡片。')
+                waiting.delete(request.target.threadId)
+                menu!.actions.clear()
+                const response = { toast: { type: 'info', content: '已取消等待。' } }
+                if (callbackKey) {
+                  callbacks.set(callbackKey, response)
+                  if (callbacks.size > 128) callbacks.delete(callbacks.keys().next().value!)
+                }
+                void sendReply(
+                  scope,
+                  messageId,
+                  {
+                    target: request.target,
+                    text: '已取消等待，本条需求不会执行。',
+                    view: 'busy',
+                    navigation: false
+                  },
+                  [messageId]
+                ).catch(() =>
+                  update({ phase: 'failed', issue: '等待已取消，但卡片更新未确认送达。' })
+                )
+                return response
+              }
               if (action.kind === 'answer-view') {
                 if (!menu?.reply || menu.view !== 'turn' || menu.reply.navigation !== true)
                   throw new Error('回答尚未结束或已过期，请查看最新卡片。')
@@ -612,6 +1102,7 @@ export class FeishuReceiver {
                     )
                   } finally {
                     pendingPermissions.delete(target.threadId)
+                    this.checkWaiting?.()
                   }
                 })()
                 const response = { toast: { type: 'info', content: '正在保存会话权限…' } }
@@ -668,14 +1159,26 @@ export class FeishuReceiver {
               if (action.kind === 'session' && !reply.target)
                 return { toast: { type: 'warning', content: reply.text } }
               if (action.kind === 'session')
-                update({ phase: 'listening', receivedAt: new Date().toISOString(), target: reply.target?.threadId })
+                update({
+                  phase: 'listening',
+                  receivedAt: new Date().toISOString(),
+                  target: reply.target?.threadId
+                })
               // 回答卡片只负责展示本轮内容，导航另开控制卡片，避免覆盖回答。
               if (action.kind !== 'session')
                 void sendReply(scope, messageId, reply).catch(() =>
-                  update({ phase: 'failed', issue: '会话操作回执未确认送达，请重新打开会话详情。', target: menu.target?.threadId })
+                  update({
+                    phase: 'failed',
+                    issue: '会话操作回执未确认送达，请重新打开会话详情。',
+                    target: menu.target?.threadId
+                  })
                 )
               const response = {
-                toast: { type: 'info', content: action.kind === 'session' ? '已切到此会话，下一条消息将发往这里。' : '正在打开…' }
+                toast: {
+                  type: 'info',
+                  content:
+                    action.kind === 'session' ? '已切到此会话，下一条消息将发往这里。' : '正在打开…'
+                }
               }
               if (callbackKey) {
                 callbacks.set(callbackKey, response)
@@ -711,7 +1214,8 @@ export class FeishuReceiver {
                 message.chat_id !== settings.allowedChatId ||
                 message.chat_type !== 'group' ||
                 !message.mentions?.some((item) => item.id?.open_id === botId)
-              ) return
+              )
+                return
             } else if (message.chat_type !== 'p2p') return
             // 忽略开启前的积压消息；重连期间同一消息只处理一次。
             if (Number(message.create_time) < startedAt || seen.has(message.message_id)) return
@@ -740,151 +1244,39 @@ export class FeishuReceiver {
             if (reply.target) router.bind(scope, message.message_id, reply.target.threadId)
             const queueKey = reply.target
               ? `session:${reply.target.threadId}`
-              : reply.createCwd ? `create:${scope}:${reply.createCwd}` : `menu:${scope}`
-            const pending: Promise<void> = (queues.get(queueKey) ?? Promise.resolve())
-              .then(async () => {
-                if (!active()) return
-                update({
-                  phase: 'received',
-                  receivedAt: new Date().toISOString(),
-                  target: reply.target?.threadId
-                })
-                if (reply.createCwd) {
-                  await createSession(scope, reply.createCwd, message.message_id, [], selectionVersion)
-                  return
-                }
-                if (!reply.prompt || !reply.target || !settings.executionEnabled) {
-                  await sendReply(scope, message.message_id, reply)
-                  return
-                }
-                const target = reply.target
-                const turnMessages: string[] = []
-                const title = target.title || `会话 ${target.threadId.slice(-8)}`
-                let answerText = ''
-                let progress = ''
-                let choices: RouteReply['choices']
-                try {
-                  const codex = sessionFor(target.threadId)
-                  if (quoted?.view === 'approval')
-                    throw new Error('审批请使用对应卡片上的允许或拒绝按钮。')
-                  if (quoted?.view === 'question' || codex.awaitingInput) {
-                    if (quoted?.view === 'question' && !quoted.promptId)
-                      throw new Error('这个问题已结束，请查看最新的问题卡片。')
-                    if (message.parent_id && quoted?.view !== 'question')
-                      throw new Error('会话正在等待回答，请回复对应的问题卡片。')
-                    const answer = codex.answer(reply.prompt, quoted?.promptId, quoted?.questionId)
-                    await sendReply(
-                      scope,
-                      message.parent_id ?? message.message_id,
-                      {
-                        text: answer,
-                        target,
-                        title,
-                        navigation: false,
-                        view: 'question',
-                        promptId: quoted?.promptId,
-                        questionId: quoted?.questionId
-                      },
-                      message.parent_id ? [message.parent_id] : []
-                    )
-                  } else {
-                    if (codex.running)
-                      throw new Error('Codex 正在处理，请等待本轮结束；需要中断时点击“停止本轮”。')
-                    // 先确认飞书回执可送达，再启动真实执行。
-                    await sendReply(
-                      scope,
-                      message.message_id,
-                      {
-                        text: `已收到，正在连接会话：${target.title || target.threadId}。`,
-                        sessionInfo: configurationText(),
-                        target,
-                        title,
-                        view: 'turn',
-                        navigation: false
-                      },
-                      turnMessages
-                    )
-                    if (pendingPermissions.has(target.threadId))
-                      throw new Error('此会话权限正在保存，请稍后再发送需求。')
-                    await codex.start(target, reply.prompt, async (output) => {
-                      const sessionInfo = configurationText(output.configuration, true)
-                      if (
-                        output.promptId ||
-                        output.choices?.some(
-                          (choice) =>
-                            choice.action.kind === 'answer' || choice.action.kind === 'approve'
-                        )
-                      ) {
-                        await sendReply(scope, message.message_id, {
-                          ...output,
-                          sessionInfo,
-                          target,
-                          title: output.promptId ? '待回答' : '待审批',
-                          view: output.promptId ? 'question' : 'approval',
-                          navigation: false
-                        })
-                        return
-                      }
-                      if (output.kind === 'answer' || !output.kind) {
-                        answerText += `${answerText ? '\n\n' : ''}${output.text}`
-                        progress = ''
-                      } else if (output.kind === 'progress') {
-                        const characters = Array.from(output.text)
-                        progress =
-                          characters.slice(0, 600).join('') + (characters.length > 600 ? '…' : '')
-                      } else if (output.kind === 'status') {
-                        choices = output.choices
-                      }
-                      const completed = output.kind === 'completed'
-                      const body = answerText || (completed ? '' : progress) || output.text
-                      const note = output.kind === 'answer' || output.kind === 'progress'
-                        ? '正在处理…' : output.text
-                      await sendReply(
-                        scope,
-                        message.message_id,
-                        {
-                          text: body,
-                          sessionInfo,
-                          note: note === body ? undefined : note,
-                          target,
-                          title,
-                          view: 'turn',
-                          choices: completed ? undefined : choices,
-                          navigation: completed
-                        },
-                        turnMessages
-                      )
-                    })
-                  }
-                } catch (error) {
-                  await sendReply(
-                    scope,
-                    message.message_id,
-                    {
-                      text:
-                        answerText ||
-                        (error instanceof Error ? error.message : 'Codex 请求未完成。'),
-                      note: answerText && error instanceof Error ? error.message : undefined,
-                      target,
-                      title,
-                      view: 'turn',
-                      navigation: true
-                    },
-                    turnMessages
-                  )
-                }
+              : reply.createCwd
+                ? `create:${scope}:${reply.createCwd}`
+                : `menu:${scope}`
+            enqueue(queueKey, async () => {
+              update({
+                phase: 'received',
+                receivedAt: new Date().toISOString(),
+                target: reply.target?.threadId
               })
-              .catch(() =>
-                update({
-                  phase: 'failed',
-                  issue:
-                    '已接收消息，但回执未确认送达。请检查发送消息权限及网络后重新发送。 / Reply delivery was not confirmed.'
-                })
+              if (reply.createCwd) {
+                await createSession(
+                  scope,
+                  reply.createCwd,
+                  message.message_id,
+                  [],
+                  selectionVersion
+                )
+                return
+              }
+              if (!reply.prompt || !reply.target || !settings.executionEnabled) {
+                await sendReply(scope, message.message_id, reply)
+                return
+              }
+              await executePrompt(
+                scope,
+                message.message_id,
+                reply.target,
+                reply.prompt,
+                [],
+                quoted,
+                message.parent_id
               )
-              .finally(() => {
-                if (queues.get(queueKey) === pending) queues.delete(queueKey)
-              })
-            queues.set(queueKey, pending)
+            })
             // 立即结束事件回调，避免网络发送阻塞飞书事件确认。
           }
         })

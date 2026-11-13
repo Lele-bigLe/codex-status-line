@@ -120,6 +120,7 @@ const taskNotifications = new Set<Notification>()
 function updateTasks(snapshot: TasksSnapshot, notifications: TaskNotificationRecord[]): void {
   const countChanged = taskSnapshot.tasks.length !== snapshot.tasks.length
   taskSnapshot = snapshot
+  feishuReceiver?.onTasksChanged()
   if (countChanged && taskWindowState.expanded) resizeTaskWindow(true)
   sendToRenderers('onTasksUpdated', snapshot)
   refreshTrayMenu()
@@ -462,7 +463,7 @@ if (hasSingleInstanceLock) {
       }, (task) => taskMonitor.addSession(task), {
         load: () => feishuNotifier.getRecentSessions(),
         save: (selection, settings, active) => feishuNotifier.rememberSession(selection, settings, active)
-      })
+      }, (sourceId) => taskMonitor.prepareFork(sourceId))
     void feishuReceiver.configure(feishuNotifier.getSettings())
 
     automation = new AutomationService(

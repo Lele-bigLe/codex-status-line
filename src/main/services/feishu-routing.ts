@@ -34,7 +34,7 @@ export interface RouteReply {
     options: { label: string; value: string }[]
     selected?: string
   }[]
-  view?: 'switcher' | 'turn' | 'question' | 'approval' | 'details' | 'permissions'
+  view?: 'switcher' | 'turn' | 'question' | 'approval' | 'details' | 'permissions' | 'busy'
 }
 
 export type RouteAction =
@@ -45,6 +45,8 @@ export type RouteAction =
   | { kind: 'approve'; requestId: string; value: 'accept' | 'decline' }
   | { kind: 'interrupt'; requestId: string }
   | { kind: 'answer-view'; page: number }
+  | { kind: 'busy-wait' | 'busy-fork' }
+  | { kind: 'cancel-wait'; requestId: string }
 
 const STATUS_LABELS: Record<TaskRecord['status'], string> = {
   idle: '未开始',

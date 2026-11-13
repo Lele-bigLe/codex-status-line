@@ -147,6 +147,8 @@ function insideProject(file: string, cwd: string): boolean {
   }
 }
 
+export class CodexSessionBusyError extends Error {}
+
 // 每轮使用独立进程，结束后释放，下一轮从磁盘恢复最新上下文。
 export class CodexSession {
   private child?: ChildProcessWithoutNullStreams
@@ -201,11 +203,17 @@ export class CodexSession {
   async start(
     task: TaskRecord,
     text: string,
-    emit: (output: CodexOutput) => Promise<void>
+    emit: (output: CodexOutput) => Promise<void>,
+    currentTask?: () => TaskRecord
   ): Promise<void> {
     if (this.running) throw new Error('该会话正在处理，请先回答待答问题或等待本轮结束。')
-    if (task.status === 'running' || task.status === 'waiting_input' || task.status === 'unknown')
-      throw new Error('会话正在其他窗口执行或状态未知，请等待其结束后再从飞书发起。')
+    const checkStatus = (current = task): void => {
+      if (current.status === 'running' || current.status === 'waiting_input')
+        throw new CodexSessionBusyError('会话正在电脑端使用。')
+      if (current.status === 'unknown')
+        throw new Error('会话状态未知，请等待电脑端状态更新后再从飞书发起。')
+    }
+    checkStatus()
     const reuseCreated = this.createdThreadId === task.threadId && Boolean(this.child)
     if (task.status === 'idle' && !reuseCreated)
       throw new Error(
@@ -258,7 +266,7 @@ export class CodexSession {
           )
             throw new Error('恢复的会话或项目与所选目标不一致，已停止提交。')
           if (resumed.thread.status?.type === 'active')
-            throw new Error('该会话已有进行中的任务，请等待结束后再提交。')
+            throw new CodexSessionBusyError('该会话已有进行中的任务。')
           this.confirmConfiguration(task.threadId, resumed)
           if (runtime) this.options.onRuntime?.(runtime)
           prepared = true
@@ -272,6 +280,8 @@ export class CodexSession {
       }
       if (!prepared) throw new Error('没有能恢复此会话的兼容 Codex 程序。')
       ensureActive()
+      // 恢复连接期间电脑端可能再次开始一轮，提交前重新核对监视状态。
+      checkStatus(currentTask?.())
       this.preparing = false
       this.createdThreadId = undefined
       // 从这里开始禁止切换程序或自动重试，避免一次需求执行两遍。
@@ -366,6 +376,94 @@ export class CodexSession {
         turnId: '',
         cwd: thread.cwd,
         title: thread.name || '新会话',
+        client: 'unknown',
+        status: 'idle',
+        updatedAt: new Date().toISOString()
+      }
+    } finally {
+      if (generation === this.generation && !this.createdThreadId) this.stop()
+    }
+  }
+
+  async fork(source: TaskRecord): Promise<TaskRecord | undefined> {
+    if (this.running || this.child) throw new Error('当前连接正在使用，请稍后分叉。')
+    const generation = ++this.generation
+    const ensureActive = (): void => {
+      if (generation !== this.generation) throw new Error('会话分叉已取消。')
+    }
+    this.preparing = true
+    try {
+      const candidates = discoverCodexExecutables(this.executable)
+      let lastTurnId: string | undefined
+      for (const executable of candidates) {
+        try {
+          const runtime = await this.connect(executable, source.cwd)
+          ensureActive()
+          let cursor: string | undefined
+          const cursors = new Set<string>()
+          do {
+            const page = (await this.request('thread/turns/list', {
+              threadId: source.threadId,
+              limit: 50,
+              sortDirection: 'desc',
+              itemsView: 'notLoaded',
+              ...(cursor ? { cursor } : {})
+            })) as { data?: { id: string; status: string }[]; nextCursor?: string | null }
+            ensureActive()
+            if (!Array.isArray(page.data)) throw new Error('无法确认会话历史，未执行分叉。')
+            lastTurnId = page.data.find((turn) => turn.status === 'completed')?.id
+            if (lastTurnId || !page.nextCursor) break
+            if (cursors.has(page.nextCursor) || cursors.size >= 100)
+              throw new Error('无法确认上一轮已完成的对话，未执行分叉。')
+            cursor = page.nextCursor
+            cursors.add(cursor)
+          } while (cursor)
+          if (!lastTurnId) return
+          this.options.onRuntime?.(runtime)
+          break
+        } catch (error) {
+          ensureActive()
+          this.closeTransport()
+          if (!(error instanceof CodexProtocolError) || executable === candidates.at(-1))
+            throw error
+        }
+      }
+      ensureActive()
+      // 分叉可能已经落盘；提交后不换程序、不重试，避免重复创建。
+      if (!lastTurnId) throw new Error('未确认已完成轮次，未执行分叉。')
+      const result = (await this.request('thread/fork', {
+        threadId: source.threadId,
+        lastTurnId,
+        excludeTurns: true,
+        ephemeral: false,
+        cwd: source.cwd,
+        sandbox: 'read-only',
+        approvalPolicy: 'untrusted',
+        approvalsReviewer: 'user'
+      })) as CodexSessionConfiguration & {
+        thread?: { id?: string; cwd?: string; forkedFromId?: string }
+      }
+      ensureActive()
+      const thread = result.thread
+      const cwdKey = (value: string): string =>
+        process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value)
+      if (
+        !thread?.id ||
+        !/^[0-9a-f-]{36}$/i.test(thread.id) ||
+        thread.id === source.threadId ||
+        !thread.cwd ||
+        cwdKey(thread.cwd) !== cwdKey(source.cwd) ||
+        (thread.forkedFromId && thread.forkedFromId !== source.threadId)
+      )
+        throw new Error('返回的分叉会话与目标不一致，请在电脑端核对，勿重复分叉。')
+      this.confirmConfiguration(thread.id, result)
+      this.createdThreadId = thread.id
+      return {
+        id: `${thread.id}:`,
+        threadId: thread.id,
+        turnId: '',
+        cwd: thread.cwd,
+        title: `${source.title || '会话'} · 手机分支`,
         client: 'unknown',
         status: 'idle',
         updatedAt: new Date().toISOString()

@@ -16,6 +16,7 @@ interface Cursor {
   metadata?: SessionMetadata
   recoveringUntil?: number
   recoveredTurns?: Set<string>
+  forkSource?: string
 }
 const MAX_LINE = 1024 * 1024
 const ID = /^[a-zA-Z0-9_-]{1,100}$/
@@ -128,6 +129,7 @@ export function taskFromEvent(value: unknown, metadata: SessionMetadata): TaskRe
 }
 
 export class TaskMonitor {
+  private forking = new Set<string>()
   private tasks = new Map<string, TaskRecord>()
   private cursors = new Map<string, Cursor>()
   private dirty = new Set<string>()
@@ -462,9 +464,20 @@ export class TaskMonitor {
         const newline = header.subarray(0, bytesRead).indexOf(10)
         if (newline < 0) return
         try {
-          cursor.metadata = sessionMetadata(
-            JSON.parse(header.subarray(0, newline).toString('utf8'))
-          )
+          const metadata = JSON.parse(header.subarray(0, newline).toString('utf8'))
+          cursor.metadata = sessionMetadata(metadata)
+          const forkedFromId = record(record(metadata)?.payload)?.forked_from_id
+          if (
+            cursor.metadata &&
+            cursor.offset === 0 &&
+            typeof forkedFromId === 'string' &&
+            ID.test(forkedFromId)
+          ) {
+            // 新发现的分叉可能含有复制的历史，只恢复现状，不重发旧轮次通知。
+            cursor.recoveringUntil = stat.size
+            cursor.recoveredTurns = new Set<string>()
+            if (this.forking.has(forkedFromId)) cursor.forkSource = forkedFromId
+          }
         } catch {
           /* 未识别的格式不推测完成。 */
         }
@@ -472,6 +485,10 @@ export class TaskMonitor {
           cursor.offset = stat.size
           return
         }
+      }
+      if (cursor.forkSource && this.forking.has(cursor.forkSource)) {
+        cursor.recoveringUntil = stat.size
+        cursor.recoveredTurns ??= new Set<string>()
       }
       if (this.removed.has(cursor.metadata.threadId)) {
         cursor.offset = stat.size
@@ -670,6 +687,24 @@ export class TaskMonitor {
 
   get(id: string): TaskRecord | undefined {
     return this.tasks.get(id)
+  }
+
+  prepareFork(sourceId: string): () => Promise<void> {
+    this.forking.add(sourceId)
+    return async () => {
+      try {
+        for (const [file, cursor] of this.cursors) {
+          if (cursor.forkSource !== sourceId) continue
+          const stat = await fs.stat(file)
+          // fork 返回后历史已写完；固定此处边界，后续真实轮次照常接收通知。
+          cursor.recoveringUntil = stat.size
+          cursor.recoveredTurns ??= new Set<string>()
+          cursor.forkSource = undefined
+        }
+      } finally {
+        this.forking.delete(sourceId)
+      }
+    }
   }
 
   async addSession(task: TaskRecord): Promise<void> {
