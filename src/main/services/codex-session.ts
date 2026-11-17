@@ -149,6 +149,10 @@ function insideProject(file: string, cwd: string): boolean {
 
 export class CodexSessionBusyError extends Error {}
 
+export const EMPTY_SESSION_IDLE_MINUTES = 30
+export const EMPTY_SESSION_UNAVAILABLE =
+  '此空会话已过期或连接已关闭。请重新新建会话，授权后发送首条需求。'
+
 // 每轮使用独立进程，结束后释放，下一轮从磁盘恢复最新上下文。
 export class CodexSession {
   private child?: ChildProcessWithoutNullStreams
@@ -169,6 +173,7 @@ export class CodexSession {
   private preparing = false
   private configuration: CodexSessionConfiguration = {}
   private createdThreadId?: string
+  private emptySessionTimer?: NodeJS.Timeout
   private generation = 0
   private fileChanges = new Map<
     string,
@@ -189,6 +194,10 @@ export class CodexSession {
 
   get running(): boolean {
     return Boolean(this.task)
+  }
+
+  hasCreatedConnection(threadId: string): boolean {
+    return this.createdThreadId === threadId && Boolean(this.child)
   }
 
   private get mention(): string {
@@ -214,11 +223,10 @@ export class CodexSession {
         throw new Error('会话状态未知，请等待电脑端状态更新后再从飞书发起。')
     }
     checkStatus()
-    const reuseCreated = this.createdThreadId === task.threadId && Boolean(this.child)
-    if (task.status === 'idle' && !reuseCreated)
-      throw new Error(
-        '此空会话的创建连接已关闭，尚无可恢复记录。请重新新增会话，授权后发送第一条文字需求。'
-      )
+    const reuseCreated = this.hasCreatedConnection(task.threadId)
+    if (task.status === 'idle' && !reuseCreated) throw new Error(EMPTY_SESSION_UNAVAILABLE)
+    clearTimeout(this.emptySessionTimer)
+    this.emptySessionTimer = undefined
     const generation = ++this.generation
     const ensureActive = (): void => {
       if (this.generation !== generation) throw new Error('Codex 执行已取消。')
@@ -370,6 +378,7 @@ export class CodexSession {
       this.confirmConfiguration(thread.id, result)
       // 空会话在首轮前不会落盘，保留原连接供第一条真实需求使用。
       this.createdThreadId = thread.id
+      this.emptySessionTimer = setTimeout(() => this.stop(), EMPTY_SESSION_IDLE_MINUTES * 60_000).unref()
       return {
         id: `${thread.id}:`,
         threadId: thread.id,
@@ -830,6 +839,8 @@ export class CodexSession {
 
   private closeTransport(): void {
     this.closing = true
+    clearTimeout(this.emptySessionTimer)
+    this.emptySessionTimer = undefined
     this.child?.kill()
     this.child = undefined
     this.createdThreadId = undefined

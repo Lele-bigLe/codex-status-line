@@ -15,7 +15,12 @@ import {
   type RouteAction,
   type RouteReply
 } from './feishu-routing'
-import { CodexSession, CodexSessionBusyError } from './codex-session'
+import {
+  CodexSession,
+  CodexSessionBusyError,
+  EMPTY_SESSION_IDLE_MINUTES,
+  EMPTY_SESSION_UNAVAILABLE
+} from './codex-session'
 
 // SDK 的异常可能包含带凭据的请求对象，统一使用脱敏状态反馈。
 const logger = { error: () => {}, warn: () => {}, info: () => {}, debug: () => {}, trace: () => {} }
@@ -496,6 +501,12 @@ export class FeishuReceiver {
       let progress = ''
       let choices: RouteReply['choices']
       try {
+        if (
+          target.status === 'idle' &&
+          currentTarget(target).status === 'idle' &&
+          !this.codex.get(target.threadId)?.hasCreatedConnection(target.threadId)
+        )
+          throw new Error(EMPTY_SESSION_UNAVAILABLE)
         const codex = sessionFor(target.threadId)
         if (quoted?.view === 'approval') throw new Error('审批请使用对应卡片上的允许或拒绝按钮。')
         if (quoted?.view === 'question' || codex.awaitingInput) {
@@ -728,7 +739,7 @@ export class FeishuReceiver {
           {
             ...reply,
             title: 'Codex 新会话',
-            note: `${selectCreated ? '已创建并选中。请选择权限，再发送第一条文字需求。' : '已创建，当前会话保持不变。选择权限后，点击“继续此会话”再发送需求。'}首条需求前请保持软件连接；重启后空会话需重新新增。`
+            note: `${selectCreated ? '已创建并选中。请先授权。' : '已创建。请授权并点击“继续此会话”。'}请在 ${EMPTY_SESSION_IDLE_MINUTES} 分钟内发送首条需求；超时或重启后需重新新建。`
           },
           messageIds
         )
